@@ -1,0 +1,60 @@
+# Aff Bazaar: бот + сайт, nginx (https://affbazaar.com) и certbot — всё в Docker.
+# Переменные ${DOMAIN}, ${WWW} берутся из .env (создаёт `make env`).
+services:
+  bot:
+    build: .
+    image: affbazaar-bot
+    container_name: affbazaar-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 8080
+    # Порт наружу не публикуется: к боту ходит только nginx по внутренней сети.
+    expose:
+      - "8080"
+    volumes:
+      - affbazaar-data:/app/data  # базы bot.db / site.db и логи — Docker-том, переживает пересборку
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: affbazaar-nginx
+    restart: unless-stopped
+    depends_on:
+      - bot
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-affbazaar.com}
+      WWW: ${WWW:-1}
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates-src:ro
+      - ./deploy/nginx/entrypoint.sh:/usr/local/bin/nginx-entrypoint:ro
+      - certbot-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/nginx-entrypoint"]
+    logging: *logging
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: affbazaar-certbot
+    restart: unless-stopped
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    # Первый выпуск сертификата делает `make ssl`; этот цикл только продлевает раз в 12 часов.
+    # nginx сам перечитывает конфиг каждые 6 часов и подхватывает новый сертификат.
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
+    logging: *logging
+
+volumes:
+  affbazaar-data:    # bot.db, site.db, logs/ — бэкап: make backup, восстановление: make restore
+  letsencrypt:       # сертификаты Let's Encrypt
+  certbot-webroot:   # файлы проверки владения доменом (/.well-known/acme-challenge)

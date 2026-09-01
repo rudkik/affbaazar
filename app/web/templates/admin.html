@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aff Bazar — админка</title>
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIzMiIgeTI9IjMyIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM0YzQ2ZDkiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNhODY2MGEiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI5IiBmaWxsPSJ1cmwoI2cpIi8+PGcgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48cGF0aCBkPSJNMTMgNy41TDExIDI0LjUiLz48cGF0aCBkPSJNMjEgNy41TDE5IDI0LjUiLz48cGF0aCBkPSJNNy41IDEzSDI0LjUiLz48cGF0aCBkPSJNNi41IDIwSDIzLjUiLz48L2c+PC9zdmc+">
+<style>
+  :root{
+    /* ---- Aff Bazar: та же система токенов, что и на index.html ---- */
+    --bg:#f6f4ef;--card:#ffffff;--line:#e7e2d5;--line-strong:#d8d0bd;--text:#1d1a15;--muted:#6d6355;--faint:#9a8f7a;
+    --accent:#4c46d9;--accent-weak:#edecfc;--accent-text:#ffffff;
+    --accent2:#a8660a;--accent2-weak:#f6e8cf;
+    --ok:#1f8f5c;--ok-weak:#e4f5ec;--warn:#a8660a;--warn-weak:#f6e8cf;--bad:#c1392b;--bad-weak:#fbe8e5;
+    --input-bg:#ffffff;--chip-bg:#efeae0;--shadow:0 1px 2px rgba(30,24,10,.06),0 3px 12px rgba(30,24,10,.05);
+    --radius:14px;--radius-sm:9px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#121119;--card:#1c1b25;--line:#2b2937;--line-strong:#3a3849;--text:#efece3;--muted:#a79c89;--faint:#766c5c;
+      --accent:#8d86ff;--accent-weak:#24213c;--accent-text:#14122a;
+      --accent2:#e3aa55;--accent2-weak:#3a2c15;
+      --ok:#3fd090;--ok-weak:#163229;--warn:#e3aa55;--warn-weak:#3a2c15;--bad:#ff7263;--bad-weak:#3a1a16;
+      --input-bg:#191822;--chip-bg:#262533;--shadow:0 1px 2px rgba(0,0,0,.4),0 3px 14px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{max-width:100%;overflow-x:hidden}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  a{color:var(--accent)}
+  header{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);
+         position:sticky;top:0;background:var(--overlay,var(--bg));backdrop-filter:blur(8px);
+         -webkit-backdrop-filter:blur(8px);z-index:5;flex-wrap:wrap}
+
+  .brand{display:flex;align-items:center;gap:8px;margin-right:auto;min-width:0}
+  .brand .logo{flex:none;display:block;border-radius:8px}
+  h1.wordmark{font-size:16px;margin:0;font-weight:800;letter-spacing:-.02em;white-space:nowrap;color:var(--text)}
+  h1.wordmark .accent-part{background:linear-gradient(90deg,var(--accent),var(--accent2));
+        -webkit-background-clip:text;background-clip:text;color:transparent}
+
+  nav{display:flex;gap:4px;flex-wrap:wrap;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
+  nav button{background:none;border:none;color:var(--muted);padding:9px 12px;border-radius:var(--radius-sm);
+             cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;min-height:40px}
+  nav button.active{background:var(--accent-weak);color:var(--accent)}
+  .hdr-link{color:var(--muted);text-decoration:none;font-size:13px;padding:8px 4px;min-height:40px;
+            display:inline-flex;align-items:center;font-weight:600}
+  .hdr-link:hover{color:var(--text)}
+  main{padding:16px;max-width:1240px;margin:0 auto}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:20px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;box-shadow:var(--shadow)}
+  .stat .n{font-size:22px;font-weight:700}
+  .stat .l{color:var(--muted);font-size:12px;margin-top:4px}
+  .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius);
+              border:1px solid var(--line);box-shadow:var(--shadow)}
+  table{width:100%;min-width:640px;border-collapse:collapse;background:var(--card)}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);font-size:13px;
+        vertical-align:top}
+  th{color:var(--muted);font-weight:600;white-space:nowrap;position:sticky;top:0;background:var(--card)}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:var(--accent-weak)}
+  input,select,textarea,button.btn{background:var(--input-bg);color:var(--text);border:1px solid var(--line);
+        border-radius:var(--radius-sm);padding:8px 10px;font-size:13px;font-family:inherit;min-height:40px}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+  textarea{width:100%;min-height:70px;resize:vertical}
+  button.btn{cursor:pointer;white-space:nowrap;font-weight:600}
+  button.btn:hover{border-color:var(--line-strong)}
+  button.btn:active{opacity:.8}
+  button.btn.p{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:700}
+  button.btn.d{border-color:var(--bad);color:var(--bad)}
+  button.btn.sm{min-height:34px;padding:5px 9px;font-size:12px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .row input,.row select{flex:1 1 140px;min-width:0}
+  .tab{display:none}.tab.on{display:block}
+  .muted{color:var(--muted)}
+  .pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;border:1px solid transparent;
+        display:inline-block;white-space:nowrap}
+  .pill.ok{color:var(--ok);border-color:var(--ok-weak);background:var(--ok-weak)}
+  .pill.bad{color:var(--bad);border-color:var(--bad-weak);background:var(--bad-weak)}
+  .pill.warn{color:var(--warn);border-color:var(--warn-weak);background:var(--warn-weak)}
+  .tag{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-weak);
+       border-radius:20px;padding:2px 8px;white-space:nowrap;display:inline-block}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow)}
+  label.f{display:block;margin-bottom:10px}
+  label.f span{display:block;color:var(--muted);font-size:12px;margin-bottom:4px;font-weight:600}
+  label.f input,label.f select,label.f textarea{width:100%}
+  .bar{height:6px;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:4px}
+  h2.sec{font-size:13px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+  .rub-item{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;
+            border-bottom:1px solid var(--line)}
+  .rub-item:last-child{border-bottom:none}
+  .rub-item input[type=text]{width:auto;flex:1 1 160px;min-width:100px}
+  .rub-item input[type=number]{width:64px}
+  .rub-item .chk{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);min-height:auto}
+  .section-title{font-weight:600;margin-bottom:6px}
+  @media (max-width: 640px){
+    main{padding:10px}
+    header{padding:8px 10px}
+    .brand .logo{width:24px;height:24px}
+    h1.wordmark{font-size:14px}
+    .admin-suffix{display:none}
+    .cards{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+    table{min-width:520px}
+    .row input,.row select{flex:1 1 100%}
+    .rub-item{flex-direction:column;align-items:stretch}
+    .rub-item input[type=text],.rub-item input[type=number]{width:100%}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg class="logo" width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="abLogoGradAdmin" x1="0" y1="0" x2="32" y2="32">
+          <stop offset="0" stop-color="var(--accent)"/>
+          <stop offset="1" stop-color="var(--accent2)"/>
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="9" fill="url(#abLogoGradAdmin)"/>
+      <g stroke="#fff" stroke-width="2.6" stroke-linecap="round">
+        <path d="M13 7.5L11 24.5"/>
+        <path d="M21 7.5L19 24.5"/>
+        <path d="M7.5 13H24.5"/>
+        <path d="M6.5 20H23.5"/>
+      </g>
+    </svg>
+    <h1 class="wordmark">Aff <span class="accent-part">Bazar</span> <span class="muted admin-suffix" style="font-weight:600">· админка</span></h1>
+  </div>
+  <nav>
+    <button data-tab="stats" class="active">Статистика</button>
+    <button data-tab="ads">Объявления</button>
+    <button data-tab="rubrics">Рубрики</button>
+    <button data-tab="messages">Сообщения</button>
+    <button data-tab="users">Пользователи</button>
+    <button data-tab="chats">Чаты</button>
+    <button data-tab="settings">Настройки</button>
+    <button data-tab="restricted">Ограниченные</button>
+    <button data-tab="payments">Платежи</button>
+  </nav>
+  <a href="/" class="hdr-link">лента</a>
+  <a href="/admin/logout" class="hdr-link">выйти</a>
+</header>
+<main>
+
+<section class="tab on" id="tab-stats">
+  <div class="cards" id="stat-cards"></div>
+  <div class="grid2">
+    <div class="box"><b>Сообщений по дням</b><div id="daily" style="margin-top:10px"></div></div>
+    <div class="box"><b>Топ участников</b><div id="top" style="margin-top:10px"></div></div>
+    <div class="box"><b>Топ рубрик (объявления)</b><div id="by-type" style="margin-top:10px"></div></div>
+  </div>
+</section>
+
+<section class="tab" id="tab-ads">
+  <div class="row">
+    <input id="a-q" placeholder="Поиск по тексту, автору">
+    <select id="a-status">
+      <option value="">Все статусы</option>
+      <option value="published">Опубликованные</option>
+      <option value="deleted">Удалённые</option>
+    </select>
+    <select id="a-type"><option value="">Все рубрики</option></select>
+    <select id="a-vert"><option value="">Все вертикали</option></select>
+    <button class="btn p" onclick="loadAds()">Найти</button>
+    <span class="muted" id="a-total"></span>
+  </div>
+  <div class="table-wrap"><table><thead><tr>
+    <th>ID</th><th>Автор</th><th>Рубрика</th><th>Текст</th><th>Стоимость</th>
+    <th>Закреп до</th><th>Статус</th><th>Дата</th><th></th>
+  </tr></thead><tbody id="a-body"></tbody></table></div>
+</section>
+
+<section class="tab" id="tab-rubrics">
+  <div class="grid2">
+    <div class="box">
+      <h2 class="sec">Типы объявлений</h2>
+      <div id="rt-list"></div>
+      <div class="rub-item" style="margin-top:10px">
+        <input type="text" id="rt-new-name" placeholder="Название новой рубрики">
+        <label class="chk"><input type="checkbox" id="rt-new-vert"> вертикаль</label>
+        <button class="btn p sm" onclick="addType()">Добавить</button>
+      </div>
+    </div>
+    <div class="box">
+      <h2 class="sec">Вертикали</h2>
+      <div id="rv-list"></div>
+      <div class="rub-item" style="margin-top:10px">
+        <input type="text" id="rv-new-name" placeholder="Название новой вертикали">
+        <button class="btn p sm" onclick="addVertical()">Добавить</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="tab" id="tab-messages">
+  <div class="row">
+    <input id="m-q" placeholder="Поиск по тексту">
+    <select id="m-status">
+      <option value="">Все статусы</option>
+      <option value="published">Опубликованные</option>
+      <option value="deleted">Удалённые</option>
+      <option value="rejected">Отклонённые</option>
+    </select>
+    <button class="btn p" onclick="loadMessages()">Найти</button>
+    <span class="muted" id="m-total"></span>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>ID</th><th>Чат</th><th>Автор</th><th>Текст</th><th>Токены</th>
+    <th>Статус</th><th>Время</th><th></th></tr></thead><tbody id="m-body"></tbody></table></div>
+</section>
+
+<section class="tab" id="tab-users">
+  <div class="row">
+    <input id="u-q" placeholder="@username, имя или ID">
+    <button class="btn p" onclick="loadUsers()">Найти</button>
+    <span class="muted" id="u-total"></span>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>ID</th><th>Юзернейм</th><th>Имя</th><th>Токены</th><th>Сообщений</th>
+    <th>Приглашено</th><th>Активирован</th><th>Начислить</th></tr></thead>
+    <tbody id="u-body"></tbody></table></div>
+</section>
+
+<section class="tab" id="tab-chats"><div class="grid2" id="chats-box"></div></section>
+
+<section class="tab" id="tab-settings"><div id="settings-box"></div></section>
+
+<section class="tab" id="tab-restricted">
+  <div class="table-wrap"><table><thead><tr><th>User ID</th><th>Юзернейм</th><th>Чат</th><th>До</th><th>Проверок</th>
+    <th></th></tr></thead><tbody id="r-body"></tbody></table></div>
+</section>
+
+<section class="tab" id="tab-payments">
+  <div class="table-wrap"><table><thead><tr><th>ID</th><th>Юзер</th><th>Сумма</th><th>Валюта</th><th>Токены</th>
+    <th>Charge ID</th><th>Время</th></tr></thead><tbody id="p-body"></tbody></table></div>
+</section>
+
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = async (url, opts) => (await fetch(url, opts)).json();
+const post = (url, body) => api(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                                      body: JSON.stringify(body || {})});
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
+  LOADERS[b.dataset.tab]?.();
+});
+
+const STAT_LABELS = {
+  chats:'Чатов', users:'Пользователей', activated:'Активировались', restricted:'Ограничено',
+  messages:'Сообщений', deleted:'Удалено',
+  tokens_balance:'Коинов на балансах', tokens_spent:'Коинов потрачено',
+  tokens_bought:'Коинов куплено', revenue:'Оплат (сумма)', referrals:'Рефералов',
+  ads_published:'Объявлений опубликовано', ads_deleted:'Объявлений удалено',
+  coins_spent_ads:'Коинов за объявления', coins_refunded_ads:'Возвращено коинов (объявл.)',
+  ads_with_image:'Объявлений с картинкой', ads_pinned:'Объявлений с закрепом',
+  revenue_extras:'Доп. доход (картинки+закреп)',
+};
+
+async function loadStats(){
+  const d = await api('/admin/api/stats');
+  $('#stat-cards').innerHTML = Object.entries(STAT_LABELS)
+    .map(([k,l]) => `<div class="stat"><div class="n">${d[k] ?? 0}</div><div class="l">${l}</div></div>`).join('');
+  const max = Math.max(1, ...d.daily.map(x => x.cnt));
+  $('#daily').innerHTML = d.daily.map(x =>
+    `<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
+       <span class="muted" style="width:88px">${esc(x.day)}</span>
+       <div class="bar" style="width:${(x.cnt/max*100).toFixed(0)}%"></div>
+       <span>${x.cnt}</span></div>`).join('') || '<span class="muted">нет данных</span>';
+  $('#top').innerHTML = d.top_users.map(u =>
+    `<div style="display:flex;justify-content:space-between;margin-bottom:6px">
+       <span>${u.username ? '@'+esc(u.username) : esc(u.full_name || u.user_id)}</span>
+       <span class="muted">${u.messages_sent} сообщ. · ${u.tokens} ток. · ${u.invited} друзей</span></div>`
+  ).join('') || '<span class="muted">нет данных</span>';
+  $('#by-type').innerHTML = (d.by_type || []).map(t =>
+    `<div style="display:flex;justify-content:space-between;margin-bottom:6px">
+       <span>${esc(t.name)}</span><span class="muted">${t.cnt}</span></div>`
+  ).join('') || '<span class="muted">нет данных</span>';
+}
+
+async function loadMessages(){
+  const p = new URLSearchParams({q: $('#m-q').value, status: $('#m-status').value, limit: 100});
+  const d = await api('/admin/api/messages?' + p);
+  $('#m-total').textContent = 'всего: ' + d.total;
+  $('#m-body').innerHTML = d.items.map(m => `<tr>
+    <td>${m.id}</td><td class="muted">${m.chat_id}</td>
+    <td>${m.username ? '@'+esc(m.username) : esc(m.full_name || m.user_id)}</td>
+    <td>${esc((m.text||'').slice(0,180))}${m.media_type && m.media_type!=='text' ? ` <span class="pill">${esc(m.media_type)}</span>`:''}</td>
+    <td>${m.cost}${m.refunded ? ' <span class="pill ok">возврат</span>':''}</td>
+    <td><span class="pill ${m.status==='published'?'ok':m.status==='pending'?'warn':'bad'}">${esc(m.status)}</span>
+        ${m.reposted ? '<span class="pill ok">в канале</span>':''}</td>
+    <td class="muted">${esc(m.created_at)}</td>
+    <td style="white-space:nowrap">
+      <button class="btn d sm" onclick="delMsg(${m.id})">Удалить</button>
+      <button class="btn sm" onclick="repost(${m.id})">В канал</button></td></tr>`).join('');
+}
+
+async function delMsg(id){
+  if (!confirm('Удалить сообщение и вернуть токены автору?')) return;
+  const r = await post(`/admin/api/messages/${id}/delete`);
+  alert('Удалено. Возвращено токенов: ' + (r.refunded ?? 0));
+  loadMessages();
+}
+async function repost(id){
+  const r = await post(`/admin/api/messages/${id}/repost`);
+  alert(r.ok ? 'Отправлено в канал' : 'Не удалось — проверьте канал для репостов');
+  loadMessages();
+}
+
+async function loadUsers(){
+  const d = await api('/admin/api/users?limit=100&q=' + encodeURIComponent($('#u-q').value));
+  $('#u-total').textContent = 'всего: ' + d.total;
+  $('#u-body').innerHTML = d.items.map(u => `<tr>
+    <td>${u.user_id}</td><td>${u.username ? '@'+esc(u.username) : '—'}</td>
+    <td>${esc(u.full_name || '')}</td><td><b>${u.tokens}</b></td><td>${u.messages_sent}</td>
+    <td>${u.invited}</td>
+    <td><span class="pill ${u.activated?'ok':'bad'}">${u.activated?'да':'нет'}</span></td>
+    <td style="white-space:nowrap">
+      <input id="give-${u.user_id}" type="number" value="10" style="width:74px">
+      <button class="btn p sm" onclick="give(${u.user_id})">+</button></td></tr>`).join('');
+}
+async function give(uid){
+  const amount = parseInt(document.getElementById('give-' + uid).value, 10);
+  if (!amount) return;
+  const r = await post(`/admin/api/users/${uid}/tokens`, {amount});
+  alert('Новый баланс: ' + r.balance);
+  loadUsers();
+}
+
+async function loadChats(){
+  const chats = await api('/admin/api/chats');
+  $('#chats-box').innerHTML = chats.map(c => `<div class="box">
+    <b>${esc(c.title || c.chat_id)}</b> <span class="muted">${c.chat_id}</span>
+    <span class="pill ${c.is_active?'ok':'bad'}">${c.is_active?'активен':'выключен'}</span>
+    <div class="muted" style="margin:8px 0">Каналы: ${c.channels.map(ch => ch.username ? '@'+esc(ch.username) : esc(ch.title||ch.channel_id)).join(', ') || 'не заданы'}</div>
+    <label class="f"><span>Режим постинга</span>
+      <select onchange="saveChat(${c.chat_id}, {post_mode: this.value})">
+        <option value="direct" ${c.post_mode==='direct'?'selected':''}>напрямую в чат</option>
+        <option value="bot_only" ${c.post_mode==='bot_only'?'selected':''}>только через бота</option>
+      </select></label>
+    <label class="f"><span>Репост в канал</span>
+      <select onchange="saveChat(${c.chat_id}, {repost_mode: this.value})">
+        <option value="manual" ${c.repost_mode==='manual'?'selected':''}>вручную (/repost)</option>
+        <option value="auto" ${c.repost_mode==='auto'?'selected':''}>автоматически</option>
+        <option value="off" ${c.repost_mode==='off'?'selected':''}>выключено</option>
+      </select></label>
+    <label class="f"><span>ID канала для репостов</span>
+      <input value="${c.repost_channel_id ?? ''}"
+             onchange="saveChat(${c.chat_id}, {repost_channel_id: this.value ? +this.value : null})"></label>
+    <label class="f"><span>Приветствие (%USER%, %CHANNEL_NAME%)</span>
+      <textarea onchange="saveChat(${c.chat_id}, {welcome_message: this.value})">${esc(c.welcome_message || '')}</textarea></label>
+  </div>`).join('') || '<span class="muted">Нет подключённых чатов</span>';
+}
+async function saveChat(id, fields){ await post(`/admin/api/chats/${id}`, fields); }
+
+const SETTING_GROUPS = [
+  {title:'Общие', keys:{
+    msg_ttl:'Время видимости сообщений бота (сек.)',
+    check_limit:'Лимит последовательных проверок подписки',
+    restrict_hours:'Время блокировки (часы)',
+    restricted_text:'Текст для заблокированного пользователя',
+    welcome_message:'Глобальное приветствие',
+    signup_bonus:'Коинов за подписку',
+    referral_bonus:'Коинов за приглашённого друга',
+    message_cost:'Стоимость одного сообщения',
+    no_tokens_text:'Текст при нехватке коинов',
+    bot_only_text:'Текст в режиме «только через бота»',
+    token_packages:'Пакеты коинов (JSON)',
+    sub_cache_ttl:'Кэш проверки подписки (сек., 0 = всегда проверять)',
+  }},
+  {title:'Объявления — канал и цены', keys:{
+    ad_channel_id:'ID канала объявлений',
+    ad_channel_title:'Название канала объявлений',
+    price_post:'Базовая цена объявления (коины)',
+    price_image:'Доплата за картинку (коины)',
+    price_pin_4h:'Доплата за закреп на 4 часа (коины)',
+    price_pin_8h:'Доплата за закреп на 8 часов (коины)',
+  }},
+  {title:'Объявления — правила', keys:{
+    rules_version:'Версия правил (смена — заставит принять заново)',
+    rules_text:'Текст правил',
+    intro_note:'Заметка для рубрики «Интро/Знакомства»',
+  }},
+];
+const LONG_KEYS = ['restricted_text','welcome_message','no_tokens_text','bot_only_text',
+                   'token_packages','rules_text'];
+
+async function loadSettings(){
+  const s = await api('/admin/api/settings');
+  $('#settings-box').innerHTML = SETTING_GROUPS.map(g => `<div class="box" style="margin-bottom:14px">
+    <h2 class="sec">${esc(g.title)}</h2>
+    ${Object.entries(g.keys).map(([k,l]) => {
+      const field = LONG_KEYS.includes(k)
+        ? `<textarea id="s-${k}" style="${k==='rules_text'?'min-height:160px':''}">${esc(s[k])}</textarea>`
+        : `<input id="s-${k}" value="${esc(s[k])}">`;
+      return `<label class="f"><span>${esc(l)}</span>${field}</label>`;
+    }).join('')}
+  </div>`).join('') + '<button class="btn p" onclick="saveSettings()">Сохранить</button>';
+}
+async function saveSettings(){
+  const payload = {};
+  SETTING_GROUPS.forEach(g => Object.keys(g.keys).forEach(k => {
+    payload[k] = document.getElementById('s-' + k).value;
+  }));
+  await post('/admin/api/settings', payload);
+  alert('Настройки сохранены');
+}
+
+async function loadRestricted(){
+  const rows = await api('/admin/api/restricted');
+  $('#r-body').innerHTML = rows.map(r => `<tr>
+    <td>${r.user_id}</td><td>${r.username ? '@'+esc(r.username) : '—'}</td>
+    <td class="muted">${r.chat_id}</td><td>${esc(r.restricted_until)}</td><td>${r.total_checks}</td>
+    <td><button class="btn sm" onclick="unrestrict(${r.user_id}, ${r.chat_id})">Снять</button></td></tr>`).join('')
+    || '<tr><td colspan="6" class="muted">Никто не ограничен</td></tr>';
+}
+async function unrestrict(uid, chat){
+  await post(`/admin/api/users/${uid}/unrestrict`, {chat_id: chat});
+  loadRestricted();
+}
+
+async function loadPayments(){
+  const rows = await api('/admin/api/payments');
+  $('#p-body').innerHTML = rows.map(p => `<tr>
+    <td>${p.id}</td><td>${p.username ? '@'+esc(p.username) : p.user_id}</td>
+    <td>${p.amount}</td><td>${esc(p.currency)}</td><td>${p.tokens}</td>
+    <td class="muted">${esc(p.charge_id)}</td><td class="muted">${esc(p.created_at)}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="muted">Оплат пока нет</td></tr>';
+}
+
+// ------------------------------------------------------------------ объявления
+let RUBRICS_CACHE = null;
+async function ensureRubricsFilters(){
+  if (RUBRICS_CACHE) return RUBRICS_CACHE;
+  RUBRICS_CACHE = await api('/admin/api/rubrics');
+  $('#a-type').innerHTML = '<option value="">Все рубрики</option>' +
+    RUBRICS_CACHE.types.map(t => `<option value="${esc(t.tag)}">${esc(t.name)}</option>`).join('');
+  $('#a-vert').innerHTML = '<option value="">Все вертикали</option>' +
+    RUBRICS_CACHE.verticals.map(v => `<option value="${esc(v.tag)}">${esc(v.name)}</option>`).join('');
+  return RUBRICS_CACHE;
+}
+
+async function loadAds(){
+  await ensureRubricsFilters();
+  const p = new URLSearchParams({
+    q: $('#a-q').value, status: $('#a-status').value,
+    ad_type: $('#a-type').value, vertical: $('#a-vert').value, limit: 100,
+  });
+  const d = await api('/admin/api/ads?' + p);
+  $('#a-total').textContent = 'всего: ' + d.total;
+  $('#a-body').innerHTML = d.items.map(a => {
+    const tags = [a.ad_type_tag ? `<span class="tag">#${esc(a.ad_type_tag)}</span>` : '',
+                 a.vertical_tag ? `<span class="tag">#${esc(a.vertical_tag)}</span>` : ''].join(' ');
+    const cost = `${a.cost_base}${a.cost_image ? ' + 🖼'+a.cost_image : ''}${a.cost_pin ? ' + 📌'+a.cost_pin : ''} = <b>${a.cost_total}</b>`;
+    const link = a.channel_message_id && a.channel_id
+      ? `<a href="https://t.me/c/${String(a.channel_id).replace(/^-100/,'')}/${a.channel_message_id}" target="_blank" rel="noopener">пост</a>`
+      : '';
+    return `<tr>
+      <td>${a.id}</td>
+      <td>${a.username ? '@'+esc(a.username) : esc(a.full_name || a.user_id)}</td>
+      <td>${tags || '<span class="muted">—</span>'}</td>
+      <td>${esc((a.text||'').slice(0,140))}</td>
+      <td style="white-space:nowrap">${cost}</td>
+      <td class="muted">${esc(a.pinned_until || '—')}</td>
+      <td><span class="pill ${a.status==='published'?'ok':'bad'}">${a.status==='published'?'опубликовано':'удалено'}</span>
+          ${a.refunded ? '<span class="pill ok">возврат</span>' : ''}</td>
+      <td class="muted">${esc(a.created_at)}</td>
+      <td style="white-space:nowrap">
+        ${a.status==='published' ? `<button class="btn d sm" onclick="delAd(${a.id})">Удалить</button>` : ''}
+        ${link}</td></tr>`;
+  }).join('') || '<tr><td colspan="9" class="muted">Ничего не найдено</td></tr>';
+}
+
+async function delAd(id){
+  if (!confirm('Удалить объявление? Пост будет снят из канала, коины возвращены автору.')) return;
+  const comment = prompt('Комментарий автору (необязательно):', '') || '';
+  const refund = confirm('Вернуть коины автору? OK — вернуть, Отмена — не возвращать.');
+  const r = await post(`/admin/api/ads/${id}/delete`, {comment, refund});
+  alert(r.already ? 'Уже было удалено ранее' : 'Удалено. Возвращено коинов: ' + (r.refunded ?? 0));
+  loadAds();
+}
+
+// ------------------------------------------------------------------ рубрики (справочники)
+async function loadRubrics(){
+  const d = await api('/admin/api/rubrics');
+  RUBRICS_CACHE = null; // список фильтров объявлений обновится при следующем открытии вкладки
+  $('#rt-list').innerHTML = d.types.map(t => `<div class="rub-item">
+    <input type="text" value="${esc(t.name)}" onchange="saveType(${t.id}, {name: this.value})">
+    <input type="text" value="${esc(t.tag)}" onchange="saveType(${t.id}, {tag: this.value})" title="тег">
+    <input type="number" value="${t.position}" onchange="saveType(${t.id}, {position: +this.value})" title="порядок">
+    <label class="chk"><input type="checkbox" ${t.has_vertical?'checked':''}
+      onchange="saveType(${t.id}, {has_vertical: this.checked?1:0})"> вертикаль</label>
+    <label class="chk"><input type="checkbox" ${t.is_active?'checked':''}
+      onchange="saveType(${t.id}, {is_active: this.checked?1:0})"> активна</label>
+  </div>`).join('') || '<span class="muted">Нет рубрик</span>';
+
+  $('#rv-list').innerHTML = d.verticals.map(v => `<div class="rub-item">
+    <input type="text" value="${esc(v.name)}" onchange="saveVertical(${v.id}, {name: this.value})">
+    <input type="text" value="${esc(v.tag)}" onchange="saveVertical(${v.id}, {tag: this.value})" title="тег">
+    <input type="number" value="${v.position}" onchange="saveVertical(${v.id}, {position: +this.value})" title="порядок">
+    <label class="chk"><input type="checkbox" ${v.is_active?'checked':''}
+      onchange="saveVertical(${v.id}, {is_active: this.checked?1:0})"> активна</label>
+  </div>`).join('') || '<span class="muted">Нет вертикалей</span>';
+}
+async function saveType(id, fields){ await post(`/admin/api/rubrics/types/${id}`, fields); }
+async function saveVertical(id, fields){ await post(`/admin/api/rubrics/verticals/${id}`, fields); }
+async function addType(){
+  const name = $('#rt-new-name').value.trim();
+  if (!name) return;
+  await post('/admin/api/rubrics/types', {name, has_vertical: $('#rt-new-vert').checked ? 1 : 0});
+  $('#rt-new-name').value = ''; $('#rt-new-vert').checked = false;
+  loadRubrics();
+}
+async function addVertical(){
+  const name = $('#rv-new-name').value.trim();
+  if (!name) return;
+  await post('/admin/api/rubrics/verticals', {name});
+  $('#rv-new-name').value = '';
+  loadRubrics();
+}
+
+const LOADERS = {stats: loadStats, ads: loadAds, rubrics: loadRubrics, messages: loadMessages,
+                 users: loadUsers, chats: loadChats, settings: loadSettings,
+                 restricted: loadRestricted, payments: loadPayments};
+loadStats();
+setInterval(() => { if (document.querySelector('nav button.active').dataset.tab === 'stats') loadStats(); }, 15000);
+</script>
+</body>
+</html>

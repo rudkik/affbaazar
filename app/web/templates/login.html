@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aff Bazar — вход в админку</title>
+<link rel="icon" "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIzMiIgeTI9IjMyIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM0YzQ2ZDkiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNhODY2MGEiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI5IiBmaWxsPSJ1cmwoI2cpIi8+PGcgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48cGF0aCBkPSJNMTMgNy41TDExIDI0LjUiLz48cGF0aCBkPSJNMjEgNy41TDE5IDI0LjUiLz48cGF0aCBkPSJNNy41IDEzSDI0LjUiLz48cGF0aCBkPSJNNi41IDIwSDIzLjUiLz48L2c+PC9zdmc+">
+<style>
+  :root{
+    /* ---- Aff Bazar: та же система токенов, что на ленте и в админке ---- */
+    --bg:#f6f4ef; --card:#ffffff; --line:#e7e2d5; --line-strong:#d8d0bd;
+    --text:#1d1a15; --muted:#6d6355; --faint:#9a8f7a;
+    --accent:#4c46d9; --accent-weak:#edecfc; --accent-contrast:#ffffff;
+    --accent2:#a8660a;
+    --bad:#c1392b; --bad-weak:#fbe8e5;
+    --shadow:0 1px 2px rgba(30,24,10,.06),0 3px 12px rgba(30,24,10,.05);
+    --radius:14px; --radius-sm:9px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#121119; --card:#1c1b25; --line:#2b2937; --line-strong:#3a3849;
+      --text:#efece3; --muted:#a79c89; --faint:#766c5c;
+      --accent:#8d86ff; --accent-weak:#24213c; --accent-contrast:#14122a;
+      --accent2:#e3aa55;
+      --bad:#ff7263; --bad-weak:#3a1a16;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 3px 14px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+       background:var(--bg);color:var(--text);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+  .brand{display:flex;align-items:center;gap:11px;margin-bottom:20px}
+  .wordmark{margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em}
+  .accent-part{background:linear-gradient(120deg,var(--accent),var(--accent2));
+               -webkit-background-clip:text;background-clip:text;color:transparent}
+  .tagline{margin:2px 0 0;font-size:13px;color:var(--muted)}
+  form{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+       padding:26px;width:min(360px,100%);box-shadow:var(--shadow)}
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+  input,button{width:100%;padding:12px 13px;border-radius:var(--radius-sm);font-size:15px;
+       font-family:inherit;border:1px solid var(--line-strong);background:var(--bg);
+       color:var(--text);min-height:44px}
+  input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button{margin-top:14px;background:var(--accent);border-color:var(--accent);
+         color:var(--accent-contrast);font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.07)}
+  .err{margin-top:12px;padding:9px 11px;border-radius:var(--radius-sm);font-size:13px;
+       color:var(--bad);background:var(--bad-weak);border:1px solid var(--bad)}
+  .back{display:block;margin-top:16px;text-align:center;font-size:13px;color:var(--muted);
+        text-decoration:none}
+  .back:hover{color:var(--accent)}
+</style>
+</head>
+<body>
+<form method="post" action="/admin/login">
+  <div class="brand">
+    <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="abLogoGrad" x1="0" y1="0" x2="32" y2="32">
+          <stop offset="0" stop-color="var(--accent)"/>
+          <stop offset="1" stop-color="var(--accent2)"/>
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="9" fill="url(#abLogoGrad)"/>
+      <g stroke="#fff" stroke-width="2.6" stroke-linecap="round">
+        <path d="M13 7.5L11 24.5"/><path d="M21 7.5L19 24.5"/>
+        <path d="M7.5 13H24.5"/><path d="M6.5 20H23.5"/>
+      </g>
+    </svg>
+    <div>
+      <h1 class="wordmark">Aff <span class="accent-part">Bazar</span></h1>
+      <p class="tagline">Вход в админку</p>
+    </div>
+  </div>
+  <label for="password">Пароль</label>
+  <input id="password" type="password" name="password" autofocus autocomplete="current-password">
+  <button type="submit">Войти</button>
+  <div class="err" id="err" hidden>Неверный пароль</div>
+  <a class="back" href="/">← к ленте объявлений</a>
+</form>
+<script>
+if (new URLSearchParams(location.search).get('e')) document.getElementById('err').hidden = false;
+</script>
+</body>
+</html>
