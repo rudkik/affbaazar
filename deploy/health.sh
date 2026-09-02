@@ -9,10 +9,14 @@ case "$STATE" in
     *) red "✖ affbazaar-bot: $STATE"; fail=1;;
 esac
 
-if curl -fsS --max-time 5 "http://127.0.0.1:${BOT_PORT}/api/chats" >/dev/null 2>&1; then
+# Повторяем попытки: try <секунд> <команда...> — сразу после make up бот поднимается несколько секунд
+try() { local until=$(( $(date +%s) + $1 )); shift
+        while :; do "$@" && return 0; [ "$(date +%s)" -ge "$until" ] && return 1; sleep 3; done; }
+
+if try 30 curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:${BOT_PORT}/api/chats"; then
     green "✔ приложение отвечает: http://127.0.0.1:${BOT_PORT}/api/chats"
 else
-    red "✖ приложение не отвечает на 127.0.0.1:${BOT_PORT} — смотрите make logs"; fail=1
+    red "✖ приложение не отвечает на 127.0.0.1:${BOT_PORT} (ждал 30 с) — смотрите make logs"; fail=1
 fi
 
 CADDY=$(find_caddy_container)
@@ -26,6 +30,8 @@ else
     yellow "! Caddy не найден ни контейнером, ни службой"
 fi
 
+# До 60 секунд: после make caddy сертификат выпускается не мгновенно
+try 60 curl -fsS --max-time 10 -o /dev/null "https://${DOMAIN}/api/me" 2>/dev/null || true
 if out=$(curl -fsS --max-time 15 "https://${DOMAIN}/api/me" 2>&1); then
     green "✔ домен: https://${DOMAIN}/api/me → $out"
     code=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "http://${DOMAIN}/" 2>/dev/null || true)
@@ -36,8 +42,13 @@ if out=$(curl -fsS --max-time 15 "https://${DOMAIN}/api/me" 2>&1); then
     fi
 else
     red "✖ https://${DOMAIN} не отвечает: $out"
-    echo "   Если make caddy только что выполнен — подождите 30 секунд (выпуск сертификата) и повторите make health."
-    echo "   Логи Caddy: docker logs ${CADDY:-<caddy>} --tail 50"
+    echo "   Если make caddy только что выполнен — подождите 30–60 секунд (выпуск сертификата) и повторите make health."
+    if [ -n "$CADDY" ]; then
+        echo "   Логи Caddy: docker logs ${CADDY} --tail 50 | grep -i ${DOMAIN}"
+    else
+        echo "   Логи Caddy: journalctl -u caddy --since '15 min ago' --no-pager | grep -iE '${DOMAIN}|error' | tail -20"
+    fi
+    echo "   Блок в Caddyfile: grep -n ${DOMAIN} ${CADDYFILE:-/etc/caddy/Caddyfile}"
     fail=1
 fi
 
