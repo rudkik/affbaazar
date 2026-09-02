@@ -12,6 +12,7 @@
 
 Целевая ОС сервера: Ubuntu 22.04/24.04 или Debian 12 (нужен `sudo`).
 
+
 ## Быстрый старт
 
 ```bash
@@ -64,8 +65,10 @@ Caddy сам ставит `X-Forwarded-For` и `X-Forwarded-Proto`, бот им 
 куки сессий с флагом `Secure`. `X-Frame-Options` намеренно не выставляется: Telegram Web
 открывает Mini App в iframe.
 
-Если Caddy когда-нибудь уберут, вместо `make caddy` понадобится любой другой прокси на
-`127.0.0.1:8081` — бот дополнительно публикует этот порт на localhost.
+Если Caddy стоит не в Docker, а службой на хосте (`systemctl status caddy`), `make caddy` сам
+переключится на этот режим: правит `/etc/caddy/Caddyfile`, проксирует на `127.0.0.1:8081`
+и делает `systemctl reload caddy`. Контейнер ищется по слову `caddy` в имени образа или
+контейнера; если он назван иначе — `CADDY_CONTAINER=имя` в `.env`.
 
 ## Повседневные команды
 

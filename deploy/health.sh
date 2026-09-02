@@ -20,8 +20,10 @@ if [ -n "$CADDY" ]; then
     green "✔ Caddy: контейнер ${CADDY}"
     NETS=$(docker inspect affbazaar-bot -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)
     echo " $NETS" | grep -q " ${CADDY_NETWORK} " && green "✔ бот в сети ${CADDY_NETWORK}" || { red "✖ бот не в сети ${CADDY_NETWORK} (сети: ${NETS})"; fail=1; }
+elif systemctl is-active caddy >/dev/null 2>&1; then
+    green "✔ Caddy: служба на хосте (проксирует на 127.0.0.1:${BOT_PORT})"
 else
-    yellow "! контейнер Caddy не найден"
+    yellow "! Caddy не найден ни контейнером, ни службой"
 fi
 
 if out=$(curl -fsS --max-time 15 "https://${DOMAIN}/api/me" 2>&1); then

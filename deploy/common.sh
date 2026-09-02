@@ -45,8 +45,10 @@ apt_install() {
 # Запущен ли сервис compose. running SERVICE
 running() { $COMPOSE ps --status running --services 2>/dev/null | grep -qx "$1"; }
 
-# Контейнер Caddy: из .env или первый контейнер с образом caddy
+# Контейнер Caddy: из .env, иначе первый запущенный контейнер, у которого caddy в имени образа или контейнера.
+# Пусто — контейнера нет (возможно, Caddy стоит службой на хосте).
 find_caddy_container() {
     if [ -n "$CADDY_CONTAINER" ]; then echo "$CADDY_CONTAINER"; return; fi
-    docker ps --format '{{.Names}} {{.Image}}' | awk 'tolower($2) ~ /caddy/ {print $1; exit}'
+    docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null \
+      | awk 'tolower($2) ~ /caddy/ || tolower($1) ~ /caddy/ {print $1; exit}'
 }
