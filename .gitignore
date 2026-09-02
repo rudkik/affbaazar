@@ -12,3 +12,4 @@ logs-restricted/
 .idea/
 *.bak
 backups/
+server-info/

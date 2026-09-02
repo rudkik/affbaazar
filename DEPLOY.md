@@ -1,19 +1,21 @@
 # Деплой
 
-Боевой домен: **https://affbazaar.com**. Всё живёт в Docker и разворачивается командами `make`:
+Боевой домен: **https://affbazaar.com**. Бот и сайт работают в Docker. Наружу их отдаёт
+**Caddy из соседнего проекта `affbiz`**, который уже держит порты 80/443 на этом сервере и сам
+выпускает и продлевает сертификаты Let's Encrypt. Поэтому ни nginx, ни certbot не нужны:
+бот подключается к Docker-сети `affbiz`, а в Caddyfile добавляется блок `affbazaar.com`.
 
 ```
-интернет → affbazaar-nginx :80/:443 → affbazaar-bot :8080 (внутренняя сеть) → ./data/*.db (диск сервера)
-                  ↑ сертификат
-           affbazaar-certbot (выпуск и автопродление Let's Encrypt)
+интернет → Caddy (проект affbiz) :80/:443 ─┬→ affbazaar.com → affbazaar-bot:8080 → том affbazaar-data (bot.db, site.db, logs)
+                                           └→ сайт affbiz   → его nginx:80 (наружу 8080) — не трогаем
 ```
 
-На сервере нужны только Docker, git и make. Целевая ОС: Ubuntu 22.04/24.04 или Debian 12.
+Целевая ОС сервера: Ubuntu 22.04/24.04 или Debian 12 (нужен `sudo`).
 
-## Быстрый старт на чистом сервере
+## Быстрый старт
 
 ```bash
-# 0. DNS: A-запись affbazaar.com (и www.affbazaar.com) → IP сервера. Без этого не выпустится сертификат.
+# 0. DNS: A-запись affbazaar.com (и www.affbazaar.com) → IP сервера. Без этого Caddy не выпустит сертификат.
 
 sudo apt update && sudo apt install -y git make curl
 git clone <ваш-репозиторий> /opt/affbazaar && cd /opt/affbazaar
@@ -21,27 +23,60 @@ git clone <ваш-репозиторий> /opt/affbazaar && cd /opt/affbazaar
 make env          # создаст .env под https://affbazaar.com, SECRET_KEY сгенерирует сам
 nano .env         # вписать BOT_TOKEN, ADMINS, ADMIN_PASSWORD
 
-make firewall     # ufw: 22, 80, 443 (по желанию)
-make deploy       # docker → сборка и запуск трёх контейнеров → сертификат + HTTPS → проверка
+make deploy       # docker → сборка и запуск → блок в Caddyfile + reload Caddy → проверка
 make cron-backup  # ежедневный бэкап баз в /var/backups/affbazaar
 ```
 
 `make deploy` идемпотентен: если что-то упало (например, DNS ещё не разъехался), поправьте
-и запустите снова. По шагам это `make docker check-env ports up ssl health`.
+и запустите снова. По шагам это `make docker check-env ports up caddy health`.
 
 В конце `make deploy` выведет, что прописать в @BotFather (`/newapp` с Web App URL
 `https://affbazaar.com`, `/setdomain`).
+
+## Как бот подключается к Caddy
+
+`make caddy` делает следующее, ничего не спрашивая:
+
+1. Проверяет DNS домена (и `www`; если для `www` записи нет — пишет `WWW=0` в `.env` и не добавляет его).
+2. Находит контейнер Caddy (первый с образом `caddy`; можно задать `CADDY_CONTAINER=` в `.env`).
+3. Проверяет, что бот и Caddy в одной Docker-сети. По умолчанию это `affbiz_default`
+   (сеть compose-проекта `affbiz`); если Caddy в другой — записывает её в `.env` как
+   `CADDY_NETWORK=` и пересоздаёт контейнер бота в ней.
+4. Находит Caddyfile на хосте по монтированию контейнера (или берёт `CADDYFILE=` из `.env`),
+   делает его резервную копию и вставляет блок между маркерами `# --- affbazaar begin/end ---`.
+   Повторный запуск обновляет блок, чужие сайты не трогает.
+5. `caddy validate`, затем `caddy reload`. Если проверка не прошла — откатывает Caddyfile.
+
+Сам блок (`make caddy-snippet`, если хочется вставить руками):
+
+```caddyfile
+www.affbazaar.com {
+	redir https://affbazaar.com{uri} permanent
+}
+affbazaar.com {
+	encode zstd gzip
+	header { Strict-Transport-Security "max-age=31536000; includeSubDomains" ... }
+	reverse_proxy affbazaar-bot:8080
+}
+```
+
+Caddy сам ставит `X-Forwarded-For` и `X-Forwarded-Proto`, бот им доверяет и на https ставит
+куки сессий с флагом `Secure`. `X-Frame-Options` намеренно не выставляется: Telegram Web
+открывает Mini App в iframe.
+
+Если Caddy когда-нибудь уберут, вместо `make caddy` понадобится любой другой прокси на
+`127.0.0.1:8081` — бот дополнительно публикует этот порт на localhost.
 
 ## Повседневные команды
 
 | Команда | Что делает |
 |---|---|
 | `make update` | подтянуть код (`git pull`), пересобрать, перезапустить, проверить |
-| `make logs` / `make logs SVC=bot` | логи всех контейнеров / одного (bot, nginx, certbot) |
-| `make restart` / `make down` / `make up` | перезапуск / остановка / запуск всех контейнеров |
-| `make health` | контейнеры, приложение, `https://affbazaar.com`, редирект, сертификат, Mini App |
-| `make certs` | сертификаты и сроки действия |
-| `make nginx` | перечитать конфиг nginx после правки шаблонов |
+| `make logs` | логи бота в реальном времени |
+| `make restart` / `make down` / `make up` | перезапуск / остановка / запуск бота |
+| `make health` | контейнер, приложение, сеть с Caddy, `https://affbazaar.com`, редирект, сертификат, Mini App |
+| `make caddy` | повторно вставить/обновить блок в Caddyfile и перечитать Caddy |
+| `make caddy-snippet` | показать блок для Caddyfile |
 | `make backup` | архив с `bot.db`, `site.db` и логами в `/var/backups/affbazaar` |
 | `make restore FILE=…` | восстановить базы из такого архива |
 | `make import-data` | разово перенести базы из `./data` в Docker-том |
@@ -49,25 +84,13 @@ make cron-backup  # ежедневный бэкап баз в /var/backups/affba
 | `make test` | прогон тестов |
 | `make help` | список всех команд |
 
-Домен и режим www задаются в `.env` (`DOMAIN=affbazaar.com`, `WWW=1`). Если у домена нет
-записи для `www`, `make ssl` сам заметит это и запишет `WWW=0`. E-mail для уведомлений
-Let's Encrypt: `make ssl CERTBOT_EMAIL=you@example.com`.
-
-## Контейнеры
-
-| Контейнер | Образ | Что делает |
-|---|---|---|
-| `affbazaar-bot` | собирается из `Dockerfile` | Telegram-бот + сайт/админка (FastAPI) в одном процессе. Порт наружу не публикуется |
-| `affbazaar-nginx` | `nginx:1.27-alpine` | Порты 80/443. Конфиг генерируется при старте из `deploy/nginx/templates/`: `http.conf` пока нет сертификата, `https.conf` после. Раз в 6 часов перечитывает конфиг и подхватывает продлённый сертификат |
-| `affbazaar-certbot` | `certbot/certbot` | Первый выпуск делает `make ssl`, дальше контейнер каждые 12 часов запускает `certbot renew` |
-
-Тома: `affbazaar-data` (базы и логи бота), `letsencrypt` (сертификаты), `certbot-webroot`
-(файлы проверки домена). `make down` их не удаляет, удаляет только `docker compose down -v`.
+Параметры в `.env`: `DOMAIN=affbazaar.com`, `WWW=1`, `BOT_PORT=8081`, `CADDY_NETWORK=affbiz_default`,
+`CADDY_CONTAINER=` и `CADDYFILE=` (пустые = автоопределение).
 
 ## Данные
 
 База — SQLite, она работает внутри контейнера бота как библиотека, отдельного сервера нет.
-Файлы лежат в Docker-томе `affbazaar-data` (внутри контейнера `/app/data`):
+Файлы лежат в Docker-томе `affbazaar_affbazaar-data` (внутри контейнера `/app/data`):
 
 ```
 bot.db              рабочая база бота
@@ -76,37 +99,30 @@ logs/<chat_id>/     логи действий, logs/bot.log — техничес
 logs-restricted/    логи превысивших лимит
 ```
 
+`make down` и пересборка данные не трогают, удаляет их только `docker compose down -v`.
 Посмотреть файлы: `make shell` → `ls -la /app/data`. Достать наружу: `make backup`.
-Если базы уже есть в папке `./data` (старый вариант деплоя или локальная разработка) —
-`make import-data` перенесёт их в том.
+Если базы уже есть в папке `./data` (локальная разработка) — `make import-data` перенесёт их в том.
 
 ## Что где лежит
 
 ```
-Makefile                          команды деплоя
-docker-compose.yml                три сервиса: bot, nginx, certbot
-deploy/env.sh                     генерация .env под домен
-deploy/check-env.sh               проверка .env перед запуском (пустой токен, http вместо https и т.п.)
-deploy/ports.sh                   порты 80/443 не заняты хостовым nginx/apache
-deploy/nginx/entrypoint.sh        рендер конфига nginx из шаблона и запуск
-deploy/nginx/templates/http.conf  шаблон до выпуска сертификата
-deploy/nginx/templates/https.conf боевой шаблон: редирект http→https и www→apex, TLS 1.2/1.3, HSTS
-deploy/ssl.sh                     выпуск сертификата контейнером certbot, переключение nginx на https
-deploy/dns.sh                     проверка, что A-запись смотрит на этот сервер
-deploy/health.sh                  проверка после деплоя
-deploy/backup.sh                  архив баз (sqlite backup API, безопасно при WAL) и логов из тома
-deploy/restore.sh                 восстановление баз из архива
-deploy/import-data.sh             перенос баз из ./data в том
-deploy/cron-backup.sh             регистрация ежедневного бэкапа
-deploy/firewall.sh                ufw
+Makefile                  команды деплоя
+docker-compose.yml        контейнер бота (проект affbazaar), сеть Caddy как external, порт 127.0.0.1:${BOT_PORT}
+deploy/env.sh             генерация .env под домен
+deploy/check-env.sh       проверка .env перед запуском (пустой токен, http вместо https и т.п.)
+deploy/ports.sh           80/443 у Caddy, 127.0.0.1:BOT_PORT свободен
+deploy/network.sh         сеть Caddy существует (иначе создаёт)
+deploy/caddy.sh           вставка блока в Caddyfile проекта affbiz, validate, reload
+deploy/caddy/site.caddy   шаблон блока для Caddyfile
+deploy/caddy/insert.py    вставка блока между маркерами
+deploy/dns.sh             проверка, что A-запись смотрит на этот сервер
+deploy/health.sh          проверка после деплоя
+deploy/backup.sh          архив баз (sqlite backup API, безопасно при WAL) и логов из тома
+deploy/restore.sh         восстановление баз из архива
+deploy/import-data.sh     перенос баз из ./data в том
+deploy/cron-backup.sh     регистрация ежедневного бэкапа
+deploy/firewall.sh        ufw
 ```
-
-Nginx-конфиг внутри контейнера генерируется — правьте шаблон в `deploy/nginx/templates/`
-и запускайте `make nginx`, а не файл в контейнере.
-
-Приложение доверяет заголовкам `X-Forwarded-*` от nginx, куки сессий на https ставятся
-с флагом `Secure`. `X-Frame-Options` намеренно не выставляется: Telegram Web открывает
-Mini App в iframe.
 
 ---
 
@@ -148,8 +164,8 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Поднимутся три контейнера. В логах бота должно появиться `Бот запущен: @ваш_бот`
-и `Веб-сервер: http://0.0.0.0:8080`. Сертификат: `bash deploy/ssl.sh` (то же, что `make ssl`).
+В логах бота должно появиться `Бот запущен: @ваш_бот` и `Веб-сервер: http://0.0.0.0:8080`.
+Подключение к Caddy: `bash deploy/caddy.sh` (то же, что `make caddy`).
 
 ### Обязательно поменяйте в `.env`
 
@@ -212,13 +228,12 @@ sudo systemctl restart affbazaar
 
 ---
 
-## nginx + HTTPS на хосте (без контейнеров nginx/certbot)
+## nginx + HTTPS на хосте (запасной вариант без Caddy)
 
-В Docker-варианте nginx и certbot уже в `docker-compose.yml`, этот раздел не нужен.
-Он для systemd-варианта или если nginx на сервере уже есть: тогда уберите сервисы `nginx`
-и `certbot` из compose и добавьте боту `ports: ["127.0.0.1:8080:8080"]`.
+На боевом сервере это делает Caddy (`make caddy`). Раздел нужен только для systemd-варианта
+или сервера без Caddy.
 
-Веб-часть слушает `127.0.0.1:8080`. Наружу отдаём через nginx.
+Веб-часть слушает `127.0.0.1:8081` (Docker) или `127.0.0.1:8080` (systemd). Наружу отдаём через nginx.
 
 `/etc/nginx/sites-available/affbazaar`:
 
@@ -228,7 +243,7 @@ server {
     server_name affbazaar.com;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:8081;   # 8080 для systemd-варианта
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -411,7 +426,7 @@ sudo chmod +x /etc/cron.daily/affbazaar-backup
 | Кнопки под постом нажимает кто попало | Так и должно быть: Telegram показывает их всем, но бот выполняет действие только для админов канала и `ADMINS` |
 | Изменили шаблон страницы, а сайт прежний | HTML кэшируется в памяти процесса — перезапустите бота (`docker compose restart`) |
 | Счёт на оплату не выставляется | Для Stars `PAYMENT_PROVIDER_TOKEN` должен быть **пустым**; для фиата — валидный токен провайдера |
-| `database is locked` | Не запускайте два экземпляра бота на одной папке `data/` |
+| `database is locked` | Не запускайте два экземпляра бота на одном томе/папке с данными |
 
 Технический лог: `data/logs/bot.log`, а также `docker compose logs -f` /
 `journalctl -u affbazaar -f`.

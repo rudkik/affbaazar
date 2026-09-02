@@ -18,12 +18,16 @@ env_set() {
     fi
 }
 
-DOMAIN="${DOMAIN:-$(env_get DOMAIN)}"; DOMAIN="${DOMAIN:-affbazaar.com}"
-WWW="${WWW:-$(env_get WWW)}";          WWW="${WWW:-1}"
-CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
+DOMAIN="${DOMAIN:-$(env_get DOMAIN)}";       DOMAIN="${DOMAIN:-affbazaar.com}"
+WWW="${WWW:-$(env_get WWW)}";                WWW="${WWW:-1}"
+BOT_PORT="${BOT_PORT:-$(env_get BOT_PORT)}"; BOT_PORT="${BOT_PORT:-8081}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/affbazaar}"
 COMPOSE="docker compose"
-CERT_PATH="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"   # путь внутри контейнеров nginx/certbot
+
+# Caddy соседнего проекта. Пусто = определить автоматически (make caddy найдёт контейнер caddy).
+CADDY_NETWORK="${CADDY_NETWORK:-$(env_get CADDY_NETWORK)}";     CADDY_NETWORK="${CADDY_NETWORK:-affbiz_default}"
+CADDY_CONTAINER="${CADDY_CONTAINER:-$(env_get CADDY_CONTAINER)}"
+CADDYFILE="${CADDYFILE:-$(env_get CADDYFILE)}"
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
@@ -40,5 +44,9 @@ apt_install() {
 
 # Запущен ли сервис compose. running SERVICE
 running() { $COMPOSE ps --status running --services 2>/dev/null | grep -qx "$1"; }
-# Есть ли сертификат (смотрим из контейнера nginx)
-cert_exists() { $COMPOSE exec -T nginx test -f "$CERT_PATH" 2>/dev/null; }
+
+# Контейнер Caddy: из .env или первый контейнер с образом caddy
+find_caddy_container() {
+    if [ -n "$CADDY_CONTAINER" ]; then echo "$CADDY_CONTAINER"; return; fi
+    docker ps --format '{{.Names}} {{.Image}}' | awk 'tolower($2) ~ /caddy/ {print $1; exit}'
+}

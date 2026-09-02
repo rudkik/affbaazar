@@ -1,17 +1,23 @@
 #!/bin/bash
-# Порты 80/443 должны быть свободны для контейнера nginx (частая причина: nginx/apache на хосте).
+# Порты: 80/443 должен держать Caddy (контейнер), 127.0.0.1:BOT_PORT — свободен для бота.
 source "$(dirname "$0")/common.sh"
-busy=0
+fail=0
+
+holder_of() { $SUDO ss -ltnpH "sport = :$1" 2>/dev/null | sed -nE 's/.*users:\(\("([^"]+)".*/\1/p' | sort -u | tr '\n' ' '; }
+
 for p in 80 443; do
-    holder=$($SUDO ss -ltnpH "sport = :$p" 2>/dev/null | sed -nE 's/.*users:\(\("([^"]+)".*/\1/p' | sort -u | tr '\n' ' ')
-    [ -n "$holder" ] || continue
-    case "$holder" in
-        *docker*) ;;   # наш же контейнер nginx
-        *) red "✖ порт $p занят: $holder"; busy=1;;
+    h=$(holder_of "$p")
+    case "$h" in
+        *docker*|*caddy*) green "✔ порт $p: ${h}(Caddy)";;
+        "") yellow "! порт $p свободен — Caddy не запущен? make caddy потребует работающий Caddy";;
+        *) red "✖ порт $p занят: $h — ожидался Caddy. Хостовый nginx/apache надо выключить или перевести за Caddy"; fail=1;;
     esac
 done
-if [ "$busy" = 1 ]; then
-    echo "   Остановите хостовый веб-сервер, например: sudo systemctl disable --now nginx apache2"
-    exit 1
-fi
-green "✔ порты 80 и 443 свободны"
+
+h=$(holder_of "$BOT_PORT")
+case "$h" in
+    "") green "✔ 127.0.0.1:${BOT_PORT} свободен для бота";;
+    *docker*) green "✔ ${BOT_PORT} занят контейнером (наш бот уже запущен?)";;
+    *) red "✖ порт ${BOT_PORT} занят: $h — задайте другой в .env: BOT_PORT=8082"; fail=1;;
+esac
+exit $fail

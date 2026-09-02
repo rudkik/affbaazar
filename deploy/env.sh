@@ -11,10 +11,17 @@ fi
 SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || openssl rand -hex 32)
 
 cat > .env <<ENVEOF
-# --- Домен (используется nginx и certbot в docker-compose) ---
+# --- Домен и прокси (make caddy / docker-compose) ---
 DOMAIN=${DOMAIN}
-# 1 — сертификат также на www.${DOMAIN} (нужна A-запись), 0 — только голый домен
+# 1 — сайт также на www.${DOMAIN} (нужна A-запись), 0 — только голый домен
 WWW=${WWW}
+# Порт бота на хосте (127.0.0.1) для проверок. 8081, т.к. 8080 занят проектом affbiz
+BOT_PORT=${BOT_PORT}
+# Docker-сеть, в которой живёт Caddy проекта affbiz (бот подключается к ней). make caddy поправит сам.
+CADDY_NETWORK=${CADDY_NETWORK}
+# Контейнер Caddy и его Caddyfile на хосте. Пусто = определить автоматически
+CADDY_CONTAINER=
+CADDYFILE=
 
 # --- Telegram ---
 BOT_TOKEN=

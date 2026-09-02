@@ -1,85 +1,43 @@
-# Aff Bazaar: бот + сайт.
-#
-# Два режима запуска:
-#
-#  * ОБЩИЙ СЕРВЕР (этот случай — рядом уже крутится affwork, и 80/443 занимает
-#    хостовый nginx):  `docker compose up -d --build`
-#    Поднимается только бот, наружу торчит 127.0.0.1:8081. Домен affbazaar.com
-#    и HTTPS вешаются на хостовый nginx — см. nginx-affbazaar.com.conf.
-#
-#  * ОТДЕЛЬНЫЙ СЕРВЕР (80/443 свободны): `docker compose --profile standalone up -d`
-#    Дополнительно стартуют свой nginx на 80/443 и certbot. Переменные
-#    ${DOMAIN}, ${WWW} берутся из .env (создаёт `make env`).
-#
-# Явное имя проекта: контейнеры/сети/volume получат префикс `affbazaar` и не
-# пересекутся с affwork (у него проект `affbiz`), даже если папку переименуют.
+# Aff Bazaar: бот + сайт в одном контейнере. Наружу (https://affbazaar.com) его отдаёт Caddy
+# из соседнего проекта affbiz: бот подключается к его Docker-сети, Caddy проксирует на affbazaar-bot:8080.
+# Настройка Caddy — `make caddy`. Переменные ${BOT_PORT}, ${CADDY_NETWORK} берутся из .env.
+
+# Имя проекта фиксируем, чтобы сеть и тома не зависели от имени папки и не пересекались с соседними стеками.
 name: affbazaar
 
 services:
   bot:
     build: .
     image: affbazaar-bot
-    container_name: affbazaar-bot
+    container_name: affbazaar-bot   # по этому имени к боту ходит Caddy: reverse_proxy affbazaar-bot:8080
     restart: unless-stopped
     env_file: .env
     environment:
       DATA_DIR: /app/data
       WEB_HOST: 0.0.0.0
-      # Порт ВНУТРИ контейнера. Задан здесь явно, чтобы WEB_PORT из .env не
-      # менял то, куда ходит nginx.
-      WEB_PORT: 8080
-    # 8080 на хосте уже занят nginx-контейнером affwork, поэтому бот публикуется
-    # только на localhost и на другом порту. Меняется через BOT_HOST_PORT в .env.
-    # В standalone-режиме эта публикация безвредна: nginx-контейнер ходит к боту
-    # по внутренней сети (affbazaar-bot:8080), а не через хост.
+      WEB_PORT: 8080            # порт внутри контейнера, менять не нужно
+    # Наружу только на localhost — для проверок (make health) и на случай прокси на хосте.
+    # 8081, чтобы не пересекаться с affbiz на 8080.
     ports:
-      - "127.0.0.1:${BOT_HOST_PORT:-8081}:8080"
+      - "127.0.0.1:${BOT_PORT:-8081}:8080"
+    networks:
+      - default
+      - caddy
     volumes:
       - affbazaar-data:/app/data  # базы bot.db / site.db и логи — Docker-том, переживает пересборку
-    logging: &logging
+    logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "5"
 
-  # ------------------------------------------------- только для отдельного сервера
-  # Под профилем `standalone`: на общем сервере с affwork порты 80/443 уже
-  # заняты хостовым nginx, и эти два контейнера не стартовали бы.
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: affbazaar-nginx
-    profiles: [standalone]
-    restart: unless-stopped
-    depends_on:
-      - bot
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DOMAIN: ${DOMAIN:-affbazaar.com}
-      WWW: ${WWW:-1}
-    volumes:
-      - ./deploy/nginx/templates:/etc/nginx/templates-src:ro
-      - ./deploy/nginx/entrypoint.sh:/usr/local/bin/nginx-entrypoint:ro
-      - certbot-webroot:/var/www/certbot
-      - letsencrypt:/etc/letsencrypt:ro
-    entrypoint: ["/bin/sh", "/usr/local/bin/nginx-entrypoint"]
-    logging: *logging
-
-  certbot:
-    image: certbot/certbot:latest
-    container_name: affbazaar-certbot
-    profiles: [standalone]
-    restart: unless-stopped
-    volumes:
-      - letsencrypt:/etc/letsencrypt
-      - certbot-webroot:/var/www/certbot
-    # Первый выпуск сертификата делает `make ssl`; этот цикл только продлевает раз в 12 часов.
-    # nginx сам перечитывает конфиг каждые 6 часов и подхватывает новый сертификат.
-    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
-    logging: *logging
+networks:
+  default: {}
+  caddy:
+    # Сеть, в которой живёт Caddy (сеть compose-проекта affbiz). Создаётся не нами;
+    # если её нет — `make network` создаст, но тогда Caddy надо подключить к ней вручную.
+    name: ${CADDY_NETWORK:-affbiz_default}
+    external: true
 
 volumes:
   affbazaar-data:    # bot.db, site.db, logs/ — бэкап: make backup, восстановление: make restore
-  letsencrypt:       # сертификаты Let's Encrypt (только standalone)
-  certbot-webroot:   # файлы проверки владения доменом (только standalone)

@@ -1,15 +1,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Aff Bazaar — деплой на сервер. Всё в Docker: бот+сайт, nginx, certbot.
+#  Aff Bazaar — деплой на сервер: бот в Docker, наружу отдаёт Caddy проекта affbiz.
+#  Caddy уже держит 80/443 и сам выпускает сертификаты, поэтому nginx/certbot не нужны:
+#  бот подключается к Docker-сети affbiz, а в Caddyfile добавляется блок affbazaar.com.
 #
-#  Первый запуск на чистом сервере:
+#  Первый запуск:
 #      make env            # создать .env → вписать BOT_TOKEN, ADMINS, ADMIN_PASSWORD
-#      make deploy         # docker → сборка и запуск → сертификат + HTTPS → проверка
+#      make deploy         # docker → сборка и запуск → блок в Caddyfile → проверка
 #
 #  Обновление после изменений в коде:
 #      make update
 #
-#  Домен берётся из .env (DOMAIN=…), по умолчанию affbazaar.com.
-#  Разово переопределить: make ssl DOMAIN=example.com WWW=0
+#  Домен и параметры Caddy берутся из .env (DOMAIN, WWW, BOT_PORT, CADDY_NETWORK, CADDYFILE).
 # ─────────────────────────────────────────────────────────────────────────────
 
 DOMAIN ?= $(strip $(shell sed -n 's/^DOMAIN=//p' .env 2>/dev/null))
@@ -20,22 +21,30 @@ WWW ?= $(strip $(shell sed -n 's/^WWW=//p' .env 2>/dev/null))
 ifeq ($(WWW),)
 WWW := 1
 endif
-CERTBOT_EMAIL ?=
-BACKUP_DIR    ?= /var/backups/affbazaar
-SVC           ?=
-FILE          ?=
-SRC           ?= ./data
+BOT_PORT ?= $(strip $(shell sed -n 's/^BOT_PORT=//p' .env 2>/dev/null))
+ifeq ($(BOT_PORT),)
+BOT_PORT := 8081
+endif
+CADDY_NETWORK ?= $(strip $(shell sed -n 's/^CADDY_NETWORK=//p' .env 2>/dev/null))
+ifeq ($(CADDY_NETWORK),)
+CADDY_NETWORK := affbiz_default
+endif
+CADDYFILE       ?=
+CADDY_CONTAINER ?=
+BACKUP_DIR      ?= /var/backups/affbazaar
+FILE            ?=
+SRC             ?= ./data
 
 COMPOSE := docker compose
 SHELL   := /bin/bash
-export DOMAIN WWW CERTBOT_EMAIL BACKUP_DIR SRC
+export DOMAIN WWW BOT_PORT CADDY_NETWORK CADDYFILE CADDY_CONTAINER BACKUP_DIR SRC
 
 .DEFAULT_GOAL := help
-.PHONY: help env check-env docker ports build up down restart logs ps shell update \
-        nginx ssl certs deploy health dns firewall backup restore import-data cron-backup test dev botfather
+.PHONY: help env check-env docker ports network build up down restart logs ps shell update \
+        caddy caddy-snippet deploy health dns firewall backup restore import-data cron-backup test dev botfather
 
 help: ## Список команд
-	@echo "Домен: https://$(DOMAIN) (www=$(WWW))   контейнеры: affbazaar-bot, affbazaar-nginx, affbazaar-certbot"
+	@echo "Домен: https://$(DOMAIN) (www=$(WWW))   бот: affbazaar-bot → 127.0.0.1:$(BOT_PORT), сеть Caddy: $(CADDY_NETWORK)"
 	@echo
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | \
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -52,47 +61,47 @@ docker: ## Установить Docker, если его нет
 	@command -v docker >/dev/null 2>&1 && echo "Docker уже установлен: $$(docker --version)" || \
 	  { echo "Устанавливаю Docker…"; curl -fsSL https://get.docker.com | sh; }
 
-ports: ## Проверить, что порты 80/443 не заняты хостовым веб-сервером
+ports: ## Проверить порты: 80/443 у Caddy, 127.0.0.1:BOT_PORT свободен
 	@bash deploy/ports.sh
+
+network: ## Убедиться, что сеть Caddy ($(CADDY_NETWORK)) существует
+	@bash deploy/network.sh
 
 build: ## Собрать образ бота
 	$(COMPOSE) build
 
-up: check-env ## Собрать и запустить все контейнеры (бот, nginx, certbot)
+up: check-env network ## Собрать и запустить бота
 	$(COMPOSE) up -d --build
 	@$(COMPOSE) ps
 
-down: ## Остановить все контейнеры (данные и сертификаты остаются)
+down: ## Остановить бота (данные в томе остаются)
 	$(COMPOSE) down
 
-restart: ## Перезапустить (SVC=bot — только один сервис)
-	$(COMPOSE) restart $(SVC)
+restart: ## Перезапустить бота (без пересборки)
+	$(COMPOSE) restart
 	@$(COMPOSE) ps
 
-logs: ## Логи (SVC=bot|nginx|certbot — только один сервис), Ctrl+C — выйти
-	$(COMPOSE) logs -f --tail=200 $(SVC)
+logs: ## Логи бота (Ctrl+C — выйти)
+	$(COMPOSE) logs -f --tail=200
 
-ps: ## Статус контейнеров
+ps: ## Статус контейнера
 	@$(COMPOSE) ps
 
 shell: ## Shell внутри контейнера бота
 	$(COMPOSE) exec bot bash
 
-update: check-env ## Обновить код (git pull, если есть репозиторий), пересобрать, проверить
+update: check-env network ## Обновить код (git pull, если есть репозиторий), пересобрать, проверить
 	@if [ -d .git ]; then git pull --ff-only; else echo "Не git-репозиторий — пропускаю git pull"; fi
 	$(COMPOSE) up -d --build
 	@docker image prune -f >/dev/null
 	@$(MAKE) --no-print-directory health
 
-# ── nginx / https ────────────────────────────────────────────────────────────
-nginx: ## Перечитать конфиг nginx после правки шаблонов в deploy/nginx/templates
-	$(COMPOSE) exec -T nginx sh /usr/local/bin/nginx-entrypoint reload
+# ── caddy (проект affbiz) ────────────────────────────────────────────────────
+caddy: ## Добавить/обновить блок $(DOMAIN) в Caddyfile проекта affbiz и перечитать Caddy
+	@bash deploy/caddy.sh
 
-ssl: ## Выписать сертификат Let's Encrypt и включить HTTPS
-	@bash deploy/ssl.sh
-
-certs: ## Показать сертификаты и сроки
-	$(COMPOSE) run --rm --entrypoint certbot certbot certificates
+caddy-snippet: ## Показать блок для Caddyfile (если вставлять руками)
+	@sed -e "s/__DOMAIN__/$(DOMAIN)/g" -e "s/__UPSTREAM__/affbazaar-bot:8080/g" deploy/caddy/site.caddy
 
 dns: ## Проверить, что DNS домена указывает на этот сервер
 	@bash deploy/dns.sh
@@ -101,9 +110,9 @@ firewall: ## ufw: открыть 22, 80, 443
 	@bash deploy/firewall.sh
 
 # ── всё вместе ───────────────────────────────────────────────────────────────
-deploy: docker check-env ports up ssl health botfather ## Полный первый деплой на чистом сервере
+deploy: docker check-env ports up caddy health botfather ## Полный первый деплой
 
-health: ## Проверить контейнеры, приложение, https://домен, сертификат, Mini App
+health: ## Проверить контейнер, приложение, сеть Caddy, https://домен, сертификат, Mini App
 	@bash deploy/health.sh
 
 botfather: ## Что прописать в @BotFather после деплоя

@@ -35,4 +35,4 @@ esac
 [ -n "$(env_get DOMAIN)" ] || yellow "  ! DOMAIN не задан в .env — nginx возьмёт ${DOMAIN}"
 
 [ "$errors" -eq 0 ] || { echo; die "Исправьте .env (nano .env) и повторите."; }
-green "✔ .env в порядке: ${PUBLIC_URL} (DOMAIN=${DOMAIN}, WWW=${WWW})"
+green "✔ .env в порядке: ${PUBLIC_URL} (DOMAIN=${DOMAIN}, WWW=${WWW}, BOT_PORT=${BOT_PORT})"

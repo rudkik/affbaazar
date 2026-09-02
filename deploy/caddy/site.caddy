@@ -1,0 +1,26 @@
+# --- affbazaar begin --- (блок генерируется `make caddy` из deploy/caddy/site.caddy, руками не править)
+# --- www -> apex ---
+www.__DOMAIN__ {
+	redir https://__DOMAIN__{uri} permanent
+}
+# --- /www ---
+
+__DOMAIN__ {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# X-Frame-Options не ставим: Telegram Web открывает Mini App в iframe
+		-Server
+	}
+
+	# Caddy сам добавляет X-Forwarded-For / X-Forwarded-Proto — бот им доверяет
+	reverse_proxy __UPSTREAM__ {
+		transport http {
+			read_timeout 60s
+		}
+	}
+}
+# --- affbazaar end ---
