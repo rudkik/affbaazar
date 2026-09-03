@@ -137,6 +137,7 @@
   <nav>
     <button data-tab="stats" class="active">Статистика</button>
     <button data-tab="ads">Объявления</button>
+    <button data-tab="deleted">Удалённые</button>
     <button data-tab="rubrics">Рубрики</button>
     <button data-tab="messages">Сообщения</button>
     <button data-tab="users">Пользователи</button>
@@ -176,6 +177,21 @@
     <th>ID</th><th>Автор</th><th>Рубрика</th><th>Текст</th><th>Стоимость</th>
     <th>Закреп до</th><th>Статус</th><th>Дата</th><th></th>
   </tr></thead><tbody id="a-body"></tbody></table></div>
+</section>
+
+<section class="tab" id="tab-deleted">
+  <div class="row">
+    <input id="d-q" placeholder="@username или ID автора">
+    <button class="btn p" onclick="loadDeleted()">Найти</button>
+    <span class="muted" id="d-total"></span>
+  </div>
+  <div class="table-wrap"><table><thead><tr>
+    <th>ID</th><th>Удалено</th><th>Юзер</th><th>Рубрика</th><th>Текст</th>
+    <th>Кто удалил</th><th>Комментарий</th><th>Возврат</th>
+  </tr></thead><tbody id="d-body"></tbody></table></div>
+  <div style="margin-top:10px">
+    <button class="btn sm" id="d-more" style="display:none" onclick="loadDeleted(true)">Показать ещё</button>
+  </div>
 </section>
 
 <section class="tab" id="tab-rubrics">
@@ -223,7 +239,7 @@
     <span class="muted" id="u-total"></span>
   </div>
   <div class="table-wrap"><table><thead><tr><th>ID</th><th>Юзернейм</th><th>Имя</th><th>Токены</th><th>Сообщений</th>
-    <th>Приглашено</th><th>Активирован</th><th>Начислить</th></tr></thead>
+    <th>Приглашено</th><th>Удалений (нарушений)</th><th>Активирован</th><th>Начислить</th></tr></thead>
     <tbody id="u-body"></tbody></table></div>
 </section>
 
@@ -323,6 +339,7 @@ async function loadUsers(){
     <td>${u.user_id}</td><td>${u.username ? '@'+esc(u.username) : '—'}</td>
     <td>${esc(u.full_name || '')}</td><td><b>${u.tokens}</b></td><td>${u.messages_sent}</td>
     <td>${u.invited}</td>
+    <td>${u.deleted_total ? `${u.deleted_total} (${u.deleted_by_moderator})` : '<span class="muted">0</span>'}</td>
     <td><span class="pill ${u.activated?'ok':'bad'}">${u.activated?'да':'нет'}</span></td>
     <td style="white-space:nowrap">
       <input id="give-${u.user_id}" type="number" value="10" style="width:74px">
@@ -534,6 +551,43 @@ async function delAd(id){
   loadAds();
 }
 
+// ------------------------------------------------------------------ удалённые объявления
+const DEL_LIMIT = 50;
+let DEL_OFFSET = 0, DEL_QUERY = '';
+
+async function loadDeleted(more){
+  // «Показать ещё» дозагружает следующую страницу, «Найти» — начинает с нуля
+  const q = $('#d-q').value.trim().replace(/^@+/, '');
+  if (!more || q !== DEL_QUERY) { DEL_OFFSET = 0; DEL_QUERY = q; }
+  const d = await api('/admin/api/ads/deleted?' + new URLSearchParams(
+    {username: DEL_QUERY, limit: DEL_LIMIT, offset: DEL_OFFSET}));
+  $('#d-total').textContent = 'всего: ' + d.total;
+  const rows = d.items.map(a => {
+    const text = (a.text || '');
+    const cut = text.length > 120 ? text.slice(0, 120) + '…' : text;
+    const kind = (a.delete_kind === 'author')
+      ? '<span class="pill ok">автор</span>' : '<span class="pill bad">модератор</span>';
+    return `<tr>
+      <td>${a.id}</td>
+      <td class="muted" style="white-space:nowrap">${esc(a.deleted_at || '—')}</td>
+      <td>${a.username ? '@'+esc(a.username) : esc(a.full_name || a.user_id)}</td>
+      <td>${a.ad_type_name ? esc(a.ad_type_name) : '<span class="muted">—</span>'}</td>
+      <td title="${esc(text)}">${esc(cut) || '<span class="muted">—</span>'}</td>
+      <td>${kind}</td>
+      <td>${esc(a.delete_comment || '') || '<span class="muted">—</span>'}</td>
+      <td style="white-space:nowrap">${a.refunded
+        ? '<span class="pill ok">+' + (a.cost_total || 0) + '</span>' : '<span class="muted">нет</span>'}</td>
+    </tr>`;
+  }).join('');
+  if (DEL_OFFSET === 0) {
+    $('#d-body').innerHTML = rows || '<tr><td colspan="8" class="muted">Ничего не найдено</td></tr>';
+  } else {
+    $('#d-body').insertAdjacentHTML('beforeend', rows);
+  }
+  DEL_OFFSET += d.items.length;
+  $('#d-more').style.display = DEL_OFFSET < d.total ? '' : 'none';
+}
+
 // ------------------------------------------------------------------ рубрики (справочники)
 async function loadRubrics(){
   const d = await api('/admin/api/rubrics');
@@ -573,7 +627,8 @@ async function addVertical(){
   loadRubrics();
 }
 
-const LOADERS = {stats: loadStats, ads: loadAds, rubrics: loadRubrics, messages: loadMessages,
+const LOADERS = {stats: loadStats, ads: loadAds, deleted: () => loadDeleted(),
+                 rubrics: loadRubrics, messages: loadMessages,
                  users: loadUsers, chats: loadChats, settings: loadSettings,
                  restricted: loadRestricted, payments: loadPayments};
 loadStats();

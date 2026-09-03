@@ -388,8 +388,17 @@ async def admin_users(q: str = "", limit: int = 50, offset: int = 0,
         args = [like, like, like]
     # u.* отдаёт и новые поля учёта (first_name/last_name/bio/started/subscribed/…),
     # реферер подтягивается JOIN-ом — фронт использует поля по имени, лишние не мешают.
+    # deleted_total / deleted_by_moderator считаем подзапросами в том же запросе
+    # (индекс idx_ads_user), чтобы не дёргать db.user_violations по строке — это был бы N+1.
+    # NULL в delete_kind — старые строки, их всегда удалял модератор (см. db.user_violations).
     rows = await db.fetchall(
         f"""SELECT u.*, (SELECT COUNT(*) FROM users r2 WHERE r2.referrer_id = u.user_id) AS invited,
+                   (SELECT COUNT(*) FROM ads d
+                     WHERE d.user_id = u.user_id AND d.status = 'deleted') AS deleted_total,
+                   (SELECT COUNT(*) FROM ads d
+                     WHERE d.user_id = u.user_id AND d.status = 'deleted'
+                       AND COALESCE(d.delete_kind, 'moderator') = 'moderator'
+                   ) AS deleted_by_moderator,
                    r.user_id AS referrer_db_id, r.username AS referrer_username
             FROM users u
             LEFT JOIN users r ON r.user_id = u.referrer_id
@@ -591,6 +600,18 @@ async def admin_ads(q: str = "", status: str = "", ad_type: str = "", vertical: 
         f"SELECT COUNT(*) FROM ads a LEFT JOIN users u ON u.user_id = a.user_id WHERE {clause}",
         args)
     return {"items": [dict(r) for r in rows], "total": total}
+
+
+@app.get("/admin/api/ads/deleted")
+async def admin_ads_deleted(username: str = "", limit: int = 50, offset: int = 0,
+                            _: bool = Depends(require_admin)):
+    """Все удалённые объявления в одном месте, фильтр по юзернейму ТГ (или user_id).
+
+    Отдельный эндпоинт, а не status=deleted у /admin/api/ads: там фильтр по автору —
+    это LIKE по тексту/имени, а тут нужен точный поиск по нику и общий счётчик.
+    """
+    rows, total = await db.deleted_ads(username=username, limit=limit, offset=offset)
+    return {"items": rows, "total": total}
 
 
 @app.post("/admin/api/ads/{ad_id}/delete")
