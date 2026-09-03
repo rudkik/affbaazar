@@ -3,8 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aff Bazar — лента объявлений</title>
-<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIzMiIgeTI9IjMyIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM0YzQ2ZDkiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNhODY2MGEiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI5IiBmaWxsPSJ1cmwoI2cpIi8+PGcgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48cGF0aCBkPSJNMTMgNy41TDExIDI0LjUiLz48cGF0aCBkPSJNMjEgNy41TDE5IDI0LjUiLz48cGF0aCBkPSJNNy41IDEzSDI0LjUiLz48cGF0aCBkPSJNNi41IDIwSDIzLjUiLz48L2c+PC9zdmc+">
+<title>{{site_title}} — {{site_tagline}}</title>
+<meta name="description" content="{{site_title}} — {{site_tagline}}">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<link rel="manifest" href="/static/site.webmanifest">
+<meta name="theme-color" content="#4c46d9">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root{
@@ -76,12 +82,10 @@
   .header-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
 
   .brand{display:flex;align-items:center;gap:9px;min-width:0}
-  .brand .logo{flex:none;display:block;border-radius:9px}
+  .brand .logo{flex:none;display:block;width:34px;height:34px;object-fit:contain}
   .brand-text{min-width:0;line-height:1.15}
   h1.wordmark{margin:0;font-size:19px;font-weight:800;letter-spacing:-.02em;color:var(--text);
-        white-space:nowrap}
-  h1.wordmark .accent-part{background:linear-gradient(90deg,var(--accent),var(--accent2));
-        -webkit-background-clip:text;background-clip:text;color:transparent}
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tagline{margin:1px 0 0;font-size:12px;font-weight:500;color:var(--muted);white-space:nowrap;
         overflow:hidden;text-overflow:ellipsis}
   @media (max-width:519px){ .tagline{display:none} }
@@ -188,9 +192,13 @@
     .filters-panel{grid-template-columns:repeat(3,minmax(0,1fr))}
   }
   @media (min-width:860px){
+    /* на десктопе все фильтры, чекбокс и сброс — одной строкой */
     .filters-toggle{display:none}
-    .filters-panel{display:grid !important;grid-template-columns:repeat(5,minmax(0,1fr));align-items:end}
+    .filters-panel{display:flex !important;flex-wrap:nowrap;align-items:flex-end;gap:10px}
+    .field{flex:1 1 0}
     .field.wide{grid-column:auto}
+    .check-field{flex:0 0 auto}
+    .filters-actions{flex:0 0 auto;grid-column:auto}
   }
 
   /* ---------- layout ---------- */
@@ -271,24 +279,10 @@
   <div class="header-inner">
     <div class="header-top">
       <div class="brand">
-        <svg class="logo" width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
-          <defs>
-            <linearGradient id="abLogoGrad" x1="0" y1="0" x2="32" y2="32">
-              <stop offset="0" stop-color="var(--accent)"/>
-              <stop offset="1" stop-color="var(--accent2)"/>
-            </linearGradient>
-          </defs>
-          <rect width="32" height="32" rx="9" fill="url(#abLogoGrad)"/>
-          <g stroke="#fff" stroke-width="2.6" stroke-linecap="round">
-            <path d="M13 7.5L11 24.5"/>
-            <path d="M21 7.5L19 24.5"/>
-            <path d="M7.5 13H24.5"/>
-            <path d="M6.5 20H23.5"/>
-          </g>
-        </svg>
+        <img class="logo" src="{{logo_url}}" width="34" height="34" alt="{{site_title}}">
         <div class="brand-text">
-          <h1 class="wordmark">Aff <span class="accent-part">Bazar</span></h1>
-          <p class="tagline">Лента объявлений · биржа affiliate-рынка</p>
+          <h1 class="wordmark">{{site_title}}</h1>
+          <p class="tagline">{{site_tagline}}</p>
         </div>
       </div>
       <span class="live" aria-live="polite"><span class="dot" aria-hidden="true"></span>онлайн</span>
@@ -322,30 +316,25 @@
         <label for="vertical">Вертикаль</label>
         <select id="vertical"><option value="">Все вертикали</option></select>
       </div>
-      <div class="field">
-        <label for="media">Вложение</label>
-        <select id="media">
-          <option value="">Любой тип</option>
-          <option value="text">Только текст</option>
-          <option value="photo">Фото</option>
-          <option value="video">Видео</option>
-          <option value="document">Документы</option>
-          <option value="animation">GIF</option>
-          <option value="voice">Голосовые</option>
-          <option value="audio">Аудио</option>
-          <option value="sticker">Стикеры</option>
-        </select>
-      </div>
       <div class="field" id="chatField" hidden>
         <label for="chat">Чат</label>
         <select id="chat"><option value="">Все чаты</option></select>
       </div>
       <div class="field">
-        <label for="sort">Сортировка</label>
-        <select id="sort">
-          <option value="created_at:desc">Сначала новые</option>
-          <option value="created_at:asc">Сначала старые</option>
-          <option value="author_username:asc">По автору А-Я</option>
+        <label for="period">Дата публикации</label>
+        <select id="period">
+          <option value="today">Сегодня</option>
+          <option value="yesterday">Вчера</option>
+          <option value="this_week">Эта неделя</option>
+          <option value="last_week">Прошлая неделя</option>
+          <option value="last_2d">Последние 2 дня</option>
+          <option value="last_3d">Последние 3 дня</option>
+          <option value="last_7d">Последние 7 дней</option>
+          <option value="last_14d">Последние 14 дней</option>
+          <option value="last_30d">Последние 30 дней</option>
+          <option value="this_month">Этот месяц</option>
+          <option value="last_month">Прошлый месяц</option>
+          <option value="all">За всё время</option>
         </select>
       </div>
       <div class="field check-field wide">
@@ -354,7 +343,7 @@
         </label>
       </div>
       <div class="filters-actions">
-        <button type="button" class="btn-reset" id="resetFilters">Сбросить фильтры</button>
+        <button type="button" class="btn-reset" id="resetFilters" hidden>Сбросить фильтры</button>
       </div>
     </div>
 
@@ -383,8 +372,12 @@
 (function(){
   'use strict';
 
-  var DEFAULTS = { q:'', chat_id:'', ad_type:'', vertical:'', media:'', only_pinned:false,
-                    sort:'created_at', order:'desc' };
+  var DEFAULTS = { q:'', chat_id:'', ad_type:'', vertical:'', period:'all', only_pinned:false };
+  // подписи периодов для чипов активных фильтров (значения — как в site_db.PERIODS)
+  var PERIOD_LABELS = { today:'Сегодня', yesterday:'Вчера', this_week:'Эта неделя',
+    last_week:'Прошлая неделя', last_2d:'Последние 2 дня', last_3d:'Последние 3 дня',
+    last_7d:'Последние 7 дней', last_14d:'Последние 14 дней', last_30d:'Последние 30 дней',
+    this_month:'Этот месяц', last_month:'Прошлый месяц', all:'За всё время' };
   var state = {};
   var limit = 24, offset = 0, lastId = 0, total = 0, loading = false, initialLoaded = false;
   var pending = [];               // объявления, ждущие показа (пока пользователь не наверху)
@@ -394,8 +387,9 @@
   var feed = $('feed'), moreBtn = $('more'), emptyEl = $('empty'), countEl = $('count'),
       skelEl = $('skeletons'), chipsEl = $('chips'), newbar = $('newbar'),
       filtersPanel = $('filtersPanel'), filtersToggle = $('filtersToggle'), fcount = $('fcount');
-  var qInput = $('q'), adTypeSel = $('adType'), verticalSel = $('vertical'), mediaSel = $('media'),
-      chatSel = $('chat'), chatField = $('chatField'), sortSel = $('sort'), pinnedChk = $('pinned');
+  var qInput = $('q'), adTypeSel = $('adType'), verticalSel = $('vertical'),
+      chatSel = $('chat'), chatField = $('chatField'), periodSel = $('period'),
+      pinnedChk = $('pinned'), resetBtn = $('resetFilters');
 
   // ---------- auth / «Мои объявления» ----------
   var authbarEl = $('authbar'), backBtn = $('backToFeed'), toolbarTitleEl = $('toolbarTitle'),
@@ -525,17 +519,15 @@
     qInput.value = state.q;
     adTypeSel.value = state.ad_type;
     verticalSel.value = state.vertical;
-    mediaSel.value = state.media;
     chatSel.value = state.chat_id;
     pinnedChk.checked = !!state.only_pinned;
-    sortSel.value = state.sort + ':' + state.order;
+    periodSel.value = PERIOD_LABELS.hasOwnProperty(state.period) ? state.period : DEFAULTS.period;
   }
 
   function activeCount(){
     var n = 0;
     for (var k in state){
       if (!state.hasOwnProperty(k)) continue;
-      if (k === 'sort' || k === 'order') continue;
       if (state[k] !== DEFAULTS[k] && state[k] !== '') n++;
     }
     return n;
@@ -546,7 +538,7 @@
       case 'q': return 'Поиск: «' + state.q + '»';
       case 'ad_type': return 'Рубрика: ' + (adTypeNames[state.ad_type] || state.ad_type);
       case 'vertical': return 'Вертикаль: ' + (verticalNames[state.vertical] || state.vertical);
-      case 'media': return 'Вложение: ' + (MEDIA_LABELS[state.media] || (state.media === 'text' ? 'только текст' : state.media));
+      case 'period': return 'Период: ' + (PERIOD_LABELS[state.period] || state.period);
       case 'chat_id': return 'Чат: ' + (chatNames[state.chat_id] || state.chat_id);
       case 'only_pinned': return 'Только закреплённые';
       default: return key;
@@ -555,7 +547,7 @@
 
   function renderChips(){
     chipsEl.innerHTML = '';
-    var keys = ['q', 'ad_type', 'vertical', 'media', 'chat_id', 'only_pinned'];
+    var keys = ['q', 'ad_type', 'vertical', 'period', 'chat_id', 'only_pinned'];
     var any = false;
     keys.forEach(function(key){
       if (state[key] === DEFAULTS[key] || state[key] === '') return;
@@ -572,6 +564,9 @@
     var n = activeCount();
     fcount.hidden = n === 0;
     fcount.textContent = n;
+    // кнопку сброса показываем, только если хоть один фильтр отличается от значения по умолчанию
+    resetBtn.hidden = n === 0;
+    resetBtn.parentNode.hidden = n === 0;      // чтобы пустая ячейка не ломала строку фильтров
     if (typeof positionNewbar === 'function') positionNewbar();
   }
 
@@ -726,10 +721,8 @@
     if (state.chat_id) p.set('chat_id', state.chat_id);
     if (state.ad_type) p.set('ad_type', state.ad_type);
     if (state.vertical) p.set('vertical', state.vertical);
-    if (state.media) p.set('media', state.media);
+    if (state.period && state.period !== 'all') p.set('period', state.period);
     if (state.only_pinned) p.set('only_pinned', 'true');
-    p.set('sort', state.sort);
-    p.set('order', state.order);
     p.set('limit', limit);
     for (var k in (extra || {})) p.set(k, extra[k]);
     return p;
@@ -839,7 +832,9 @@
   function poll(){
     if (mode !== 'feed') return;
     if (loading) return;
-    if (state.sort !== 'created_at' || state.order !== 'desc' || !lastId) return;
+    if (!lastId) return;
+    // лента всегда «новые сверху», поэтому докачиваем всё, что появилось после lastId;
+    // выбранный период уходит в buildParams — под него новые посты тоже фильтруются
     fetch('/api/posts?' + buildParams({ after_id: lastId, order: 'asc', limit: 50 }))
       .then(function(r){ return r.json(); })
       .then(function(data){
@@ -869,15 +864,10 @@
   });
   adTypeSel.addEventListener('change', function(){ state.ad_type = adTypeSel.value; applyFilters(); });
   verticalSel.addEventListener('change', function(){ state.vertical = verticalSel.value; applyFilters(); });
-  mediaSel.addEventListener('change', function(){ state.media = mediaSel.value; applyFilters(); });
   chatSel.addEventListener('change', function(){ state.chat_id = chatSel.value; applyFilters(); });
   pinnedChk.addEventListener('change', function(){ state.only_pinned = pinnedChk.checked; applyFilters(); });
-  sortSel.addEventListener('change', function(){
-    var parts = sortSel.value.split(':');
-    state.sort = parts[0]; state.order = parts[1];
-    applyFilters();
-  });
-  $('resetFilters').addEventListener('click', function(){
+  periodSel.addEventListener('change', function(){ state.period = periodSel.value; applyFilters(); });
+  resetBtn.addEventListener('click', function(){
     state = Object.assign({}, DEFAULTS);
     syncControlsFromState();
     applyFilters();

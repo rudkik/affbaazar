@@ -1,16 +1,18 @@
 """Веб-часть: публичная лайв-лента репостов + админ-панель."""
 import hashlib
 import hmac
+import html
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app import auth, db, site_db
-from app.config import ADMIN_PASSWORD, ADMINS, PUBLIC_URL, SECRET_KEY
+from app.config import ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
 
 # На боевом домене (https) куки отдаём только по защищённому соединению.
 COOKIE_SECURE = PUBLIC_URL.startswith("https://")
@@ -18,14 +20,46 @@ COOKIE_SECURE = PUBLIC_URL.startswith("https://")
 log = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
+# Загруженный через админку логотип живёт в томе с данными — переживает пересборку образа.
+BRANDING_DIR = DATA_DIR / "branding"
 _page_cache: dict[str, str] = {}
 
 
-def page(name: str) -> HTMLResponse:
-    """Отдаёт статическую страницу (шаблонизатор не нужен — данные тянутся через API)."""
+def page(name: str) -> str:
+    """Читает шаблон с диска один раз (шаблонизатор не нужен — данные тянутся через API)."""
     if name not in _page_cache:
         _page_cache[name] = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
-    return HTMLResponse(_page_cache[name])
+    return _page_cache[name]
+
+
+def logo_path() -> Path:
+    """Загруженный логотип, а если его нет — дефолтный из статики."""
+    uploaded = BRANDING_DIR / "logo.png"
+    return uploaded if uploaded.exists() else STATIC_DIR / "logo.png"
+
+
+def logo_url() -> str:
+    """Адрес логотипа с cache-buster'ом по времени изменения файла."""
+    try:
+        version = int(logo_path().stat().st_mtime)
+    except OSError:
+        version = 0
+    return f"/branding/logo.png?v={version}"
+
+
+async def render(name: str) -> HTMLResponse:
+    """Отдаёт страницу, подставляя брендинг в плейсхолдеры {{...}} закэшированного шаблона."""
+    values = {
+        "site_title": await db.get_setting("site_title"),
+        "site_tagline": await db.get_setting("site_tagline"),
+        "logo_url": logo_url(),
+    }
+    text = page(name)
+    for key, value in values.items():
+        text = text.replace("{{" + key + "}}", html.escape(str(value or ""), quote=True))
+    return HTMLResponse(text)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -38,6 +72,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Chat Gate Bot", docs_url=None, redoc_url=None, lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Экземпляр бота проставляется из bot.py — нужен для удаления/репоста из админки.
 BOT = None
@@ -87,22 +122,79 @@ def require_admin(request: Request) -> bool:
     return True
 
 
+# ------------------------------------------------------------------ брендинг: иконки и логотип
+# Разрешённые для логотипа форматы проверяем по сигнатуре файла, а не по заголовку от браузера.
+LOGO_MAX_BYTES = 2 * 1024 * 1024
+LOGO_TYPES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+
+
+def _logo_media_type(blob: bytes) -> Optional[str]:
+    for signature, media_type in LOGO_TYPES:
+        if blob.startswith(signature):
+            return media_type
+    if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(STATIC_DIR / "favicon.ico", media_type="image/x-icon")
+
+
+@app.get("/branding/logo.png", include_in_schema=False)
+async def branding_logo():
+    """Логотип сайта: загруженный из админки, иначе дефолтный из статики."""
+    path = logo_path()
+    if not path.exists():
+        raise HTTPException(404, "Логотип не найден")
+    media_type = _logo_media_type(path.read_bytes()[:16]) or "image/png"
+    return FileResponse(path, media_type=media_type)
+
+
+@app.post("/admin/api/branding/logo")
+async def admin_upload_logo(file: UploadFile = File(...), _: bool = Depends(require_admin)):
+    """Загрузка логотипа: png/jpg/webp до 2 МБ, кладём в том с данными."""
+    if (file.size or 0) > LOGO_MAX_BYTES:
+        raise HTTPException(400, "Файл больше 2 МБ")
+    blob = await file.read(LOGO_MAX_BYTES + 1)          # больше лимита в память не тянем
+    if not blob:
+        raise HTTPException(400, "Пустой файл")
+    if len(blob) > LOGO_MAX_BYTES:
+        raise HTTPException(400, "Файл больше 2 МБ")
+    if _logo_media_type(blob) is None:
+        raise HTTPException(400, "Поддерживаются только PNG, JPEG и WebP")
+    BRANDING_DIR.mkdir(parents=True, exist_ok=True)
+    (BRANDING_DIR / "logo.png").write_bytes(blob)
+    return {"ok": True, "logo_url": logo_url(), "size": len(blob)}
+
+
+@app.post("/admin/api/branding/logo/reset")
+async def admin_reset_logo(_: bool = Depends(require_admin)):
+    """Возврат к дефолтному логотипу — просто удаляем загруженный файл."""
+    (BRANDING_DIR / "logo.png").unlink(missing_ok=True)
+    return {"ok": True, "logo_url": logo_url()}
+
+
 # ------------------------------------------------------------------ публичная лента
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return page("index.html")
+    return await render("index.html")
 
 
 @app.get("/api/posts")
 async def api_posts(q: str = "", chat_id: Optional[int] = None, author: str = "",
                     media: str = "", ad_type: str = "", vertical: str = "",
                     only_pinned: bool = False, only_reposted: bool = False,
-                    sort: str = "created_at", order: str = "desc",
+                    period: str = "all", sort: str = "created_at", order: str = "desc",
                     limit: int = 50, offset: int = 0, after_id: Optional[int] = None):
     rows, total = await site_db.query_posts(
         q=q, chat_id=chat_id, author=author, media=media, ad_type=ad_type, vertical=vertical,
-        only_pinned=only_pinned, only_reposted=only_reposted, sort=sort, order=order,
-        limit=limit, offset=offset, after_id=after_id)
+        only_pinned=only_pinned, only_reposted=only_reposted, period=period,
+        sort=sort, order=order, limit=limit, offset=offset, after_id=after_id)
     return {"items": rows, "total": total}
 
 
@@ -214,8 +306,8 @@ async def api_config():
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     if not is_authed(request):
-        return page("login.html")
-    return page("admin.html")
+        return await render("login.html")
+    return await render("admin.html")
 
 
 @app.post("/admin/login")

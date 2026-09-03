@@ -242,6 +242,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "rules_text":       RULES_TEXT_DEFAULT,
     "intro_note":       "В этой рубрике можно рассказать о себе и оставить свои соцсети, "
                         "но ссылки на Telegram-каналы публиковать нельзя.",
+
+    # --- брендинг сайта (подставляется в шаблоны при отдаче страницы) ---
+    "site_title":       "Aff Bazar",
+    "site_tagline":     "Лента объявлений · биржа affiliate-рынка",
 }
 
 
