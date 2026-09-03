@@ -42,7 +42,7 @@ async def admin_entry(message: Message, state: FSMContext) -> None:
 
 @router.message(F.chat.type == ChatType.PRIVATE, F.text == "🏠 Меню пользователя")
 async def user_menu(message: Message) -> None:
-    await message.answer("Меню пользователя", reply_markup=keyboards.main_menu())
+    await message.answer("Меню пользователя", reply_markup=await keyboards.main_menu())
 
 
 @router.message(F.chat.type == ChatType.PRIVATE, F.text == "🌐 Веб-панель")

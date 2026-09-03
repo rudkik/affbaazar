@@ -37,7 +37,9 @@ async def cb_ad_del(callback: CallbackQuery, bot: Bot) -> None:
         return
     ad_id = int(callback.data.split(":", 1)[1])
     try:
-        res = await ads.delete_ad(bot, ad_id, by_admin_id=callback.from_user.id)
+        # кнопки под постом — всегда действие модерации, даже если админ удаляет своё
+        res = await ads.delete_ad(bot, ad_id, by_admin_id=callback.from_user.id,
+                                  delete_kind="moderator")
     except ads.AdError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
@@ -107,7 +109,8 @@ async def comment_input(message: Message, bot: Bot, state: FSMContext) -> None:
         await message.answer("Не удалось определить объявление — начните заново кнопкой под постом.")
         return
     try:
-        res = await ads.delete_ad(bot, int(ad_id), by_admin_id=message.from_user.id, comment=text)
+        res = await ads.delete_ad(bot, int(ad_id), by_admin_id=message.from_user.id,
+                                  comment=text, delete_kind="moderator")
     except ads.AdError as exc:
         await message.answer(f"⚠️ {html.escape(str(exc))}")
         return

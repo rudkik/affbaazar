@@ -18,10 +18,18 @@ log = logging.getLogger(__name__)
 router = Router(name="user")
 router.message.filter(F.chat.type == ChatType.PRIVATE)
 
-MENU_BUTTONS = {"💰 Баланс", "💎 Купить коины", "💎 Купить токены", "👥 Пригласить друга",
+MENU_BUTTONS = {"💰 Баланс", "💎 Купить коины", "💎 Купить токены", keyboards.BTN_REFERRAL,
                 "📊 Мой профиль", "📢 Создать объявление", "📜 Правила", "📢 Канал и цены",
                 "📋 Чаты", "⚙️ Глобальные настройки", "💰 Выдать токены", "💰 Выдать коины", "📊 Статистика",
                 "🌐 Веб-панель", "🏠 Меню пользователя", keyboards.BTN_CHANNEL, keyboards.BTN_SITE}
+
+
+def is_menu_button(text: Optional[str]) -> bool:
+    """Текст кнопки меню? Кнопка рефералов подписана бонусом («… (Получи 10 коинов!)»),
+    поэтому её проверяем по префиксу — иначе нажатие уедет в постинг через бота."""
+    if not text:
+        return False
+    return text in MENU_BUTTONS or text.startswith(keyboards.BTN_REFERRAL)
 
 
 def _parse_ref(payload: Optional[str]) -> Optional[int]:
@@ -75,7 +83,7 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
                                  (referrer_id, user.id))
 
     is_admin = user.id in ADMINS
-    kb = keyboards.admin_menu() if is_admin else keyboards.main_menu()
+    kb = keyboards.admin_menu() if is_admin else await keyboards.main_menu()
     balance = await tokens.balance(user.id)
     signup_bonus = await db.get_int("signup_bonus")
 
@@ -114,6 +122,7 @@ async def show_profile(message: Message) -> None:
         "SELECT COALESCE(SUM(-amount),0) FROM token_tx WHERE user_id = ? AND amount < 0", (uid,))
     earned = await db.scalar(
         "SELECT COALESCE(SUM(amount),0) FROM token_tx WHERE user_id = ? AND amount > 0", (uid,))
+    violations = await db.user_violations(uid)
     await message.answer(
         f"📊 <b>Профиль</b>\n"
         f"ID: <code>{uid}</code>\n"
@@ -121,19 +130,26 @@ async def show_profile(message: Message) -> None:
         f"Сообщений отправлено: {row['messages_sent'] if row else 0}\n"
         f"Всего начислено: {earned} / потрачено: {spent}\n"
         f"Приглашено: {invited} (активировались: {activated_invited})\n"
+        f"Удалено объявлений: {violations['deleted_total']} "
+        f"(нарушений: {violations['deleted_by_moderator']})\n"
         f"Активация: {'да' if row and row['activated'] else 'нет'}")
 
 
-@router.message(F.text == "👥 Пригласить друга")
+@router.message(F.text.startswith(keyboards.BTN_REFERRAL))
 async def show_referral(message: Message, bot: Bot) -> None:
     me = await bot.get_me()
     uid = message.from_user.id
     bonus = await db.get_int("referral_bonus")
     link = f"https://t.me/{me.username}?start=ref_{uid}"
+    invited = await db.scalar("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (uid,))
+    activated_invited = await db.scalar(
+        "SELECT COUNT(*) FROM users WHERE referrer_id = ? AND activated = 1", (uid,))
     await message.answer(
         f"👥 Твоя реферальная ссылка:\n<code>{link}</code>\n\n"
         f"За каждого друга, который перейдёт по ней, подпишется на каналы и активируется, "
-        f"ты получишь <b>{bonus}</b> коинов.")
+        f"ты получишь <b>{bonus}</b> коинов.\n\n"
+        f"Вы пригласили: {invited} участников\n"
+        f"Из них активировались: {activated_invited}")
 
 
 @router.message(F.text.in_({"💎 Купить коины", "💎 Купить токены"}))
@@ -190,7 +206,7 @@ async def post_via_bot(message: Message, bot: Bot, state: FSMContext) -> None:
     """Сообщение в личке = заявка на публикацию в чат (режим «только через бота»)."""
     if message.text and message.text.startswith("/"):
         return
-    if message.text in MENU_BUTTONS:
+    if is_menu_button(message.text):
         return
     if await state.get_state() is not None:
         return  # идёт диалог настроек

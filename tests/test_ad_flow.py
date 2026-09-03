@@ -193,7 +193,10 @@ async def main():
     print("пометка «Интро/Знакомства» OK")
 
     # --- 8. Не хватает коинов -> сразу предложение пополнить ----------------
+    # у «Интро» после текста появился шаг соцсетей (см. test_post_rules.py)
     await dp.feed_update(bot, priv("Пара слов о себе и мои соцсети"))
+    assert "соцсет" in bot.last_dm()[0].lower(), bot.last_dm()
+    await dp.feed_update(bot, cb("ads_soc_skip"))
     await dp.feed_update(bot, cb("ads_img_no"))
     await dp.feed_update(bot, cb("ads_pin:8"))
     await db.execute("UPDATE users SET tokens = 1 WHERE user_id = ?", (UID,))

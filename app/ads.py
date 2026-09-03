@@ -46,8 +46,21 @@ async def price_line(has_image: bool = False, pin_hours: int = 0) -> str:
 
 
 # ------------------------------------------------------------------ текст поста
+SOCIALS_TITLE = "🔗 Соцсети:"
+
+
+def socials_block(socials: Optional[str]) -> str:
+    """Блок «🔗 Соцсети:» под основным текстом (рубрика «Интро»). Пусто — нет блока."""
+    lines = [html.escape(line.strip())
+             for line in str(socials or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return "\n\n" + SOCIALS_TITLE + "\n" + "\n".join(lines)
+
+
 def format_ad(text: str, ad_type_tag: Optional[str], vertical_tag: Optional[str],
-              author_username: Optional[str] = None) -> str:
+              author_username: Optional[str] = None,
+              socials: Optional[str] = None) -> str:
     tags = []
     if ad_type_tag:
         tags.append(f"#{ad_type_tag}")
@@ -56,7 +69,7 @@ def format_ad(text: str, ad_type_tag: Optional[str], vertical_tag: Optional[str]
     head = " ".join(tags)
     body = html.escape(text or "").strip()
     footer = f"\n\n<i>Автор: @{html.escape(author_username)}</i>" if author_username else ""
-    return (f"{head}\n\n{body}{footer}").strip()
+    return (f"{head}\n\n{body}{socials_block(socials)}{footer}").strip()
 
 
 def admin_kb(ad_id: int) -> InlineKeyboardMarkup:
@@ -96,7 +109,7 @@ async def is_channel_admin(bot: Bot, user_id: int) -> bool:
 # ------------------------------------------------------------------ публикация
 async def publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=None,
                      media_type: str = "text", media_file_id: Optional[str] = None,
-                     pin_hours: int = 0) -> dict[str, Any]:
+                     pin_hours: int = 0, socials: Optional[str] = None) -> dict[str, Any]:
     """Публикует объявление в канал, списывает коины, зеркалит на сайт.
 
     Возвращает {"ad_id", "message_id", "cost", "balance"}. Кидает AdError.
@@ -107,19 +120,22 @@ async def publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=Non
 
     ad_type_tag = ad_type_row["tag"] if ad_type_row else None
     vertical_tag = vertical_row["tag"] if vertical_row else None
-    body = format_ad(text, ad_type_tag, vertical_tag, user.username)
+    socials = "\n".join(line.strip() for line in str(socials or "").splitlines()
+                        if line.strip()) or None
+    body = format_ad(text, ad_type_tag, vertical_tag, user.username, socials)
 
     cur = await db.execute(
         """INSERT INTO ads(user_id, channel_id, ad_type_id, ad_type_name, ad_type_tag,
-                           vertical_id, vertical_name, vertical_tag, text, media_type,
-                           media_file_id, cost_base, cost_image, cost_pin, cost_total, pin_hours)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           vertical_id, vertical_name, vertical_tag, text, socials,
+                           media_type, media_file_id, cost_base, cost_image, cost_pin,
+                           cost_total, pin_hours)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (user.id, channel_id,
          ad_type_row["id"] if ad_type_row else None,
          ad_type_row["name"] if ad_type_row else None, ad_type_tag,
          vertical_row["id"] if vertical_row else None,
          vertical_row["name"] if vertical_row else None, vertical_tag,
-         text, media_type, media_file_id,
+         text, socials, media_type, media_file_id,
          quote["base"], quote["image"], quote["pin"], quote["total"], pin_hours))
     ad_id = cur.lastrowid
 
@@ -179,7 +195,7 @@ async def publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=Non
         source_message_id=sent.message_id, channel_id=channel_id,
         channel_message_id=sent.message_id, author_id=user.id,
         author_username=user.username, author_name=user.full_name,
-        text=text, media_type=media_type, media_file_id=media_file_id,
+        text=text, socials=socials, media_type=media_type, media_file_id=media_file_id,
         ad_type_name=ad_type_row["name"] if ad_type_row else None, ad_type_tag=ad_type_tag,
         vertical_name=vertical_row["name"] if vertical_row else None, vertical_tag=vertical_tag,
         pinned_until=pinned_until, is_reposted=1)
@@ -191,19 +207,29 @@ async def publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=Non
 
 # ------------------------------------------------------------------ удаление
 async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] = None,
-                    comment: Optional[str] = None, refund: bool = True) -> dict[str, Any]:
-    """Удаляет объявление из канала, снимает с сайта и возвращает коины автору."""
+                    comment: Optional[str] = None, refund: bool = True,
+                    delete_kind: Optional[str] = None) -> dict[str, Any]:
+    """Удаляет объявление из канала, снимает с сайта и возвращает коины автору.
+
+    delete_kind — 'author' (удалил сам автор) или 'moderator' (админ/модератор,
+    это нарушение). Если не передан, определяем сами: автор — только когда
+    удаление инициировал сам владелец объявления. Веб-админка зовёт нас с
+    by_admin_id=None, поэтому «нет админа» означает не автора, а модератора.
+    """
     ad = await db.fetchone("SELECT * FROM ads WHERE id = ?", (ad_id,))
     if ad is None:
         raise AdError("Объявление не найдено.")
 
+    kind = delete_kind if delete_kind in {"author", "moderator"} else (
+        "author" if by_admin_id is not None and by_admin_id == ad["user_id"] else "moderator")
+
     # «Занимаем» объявление одним запросом с условием: параллельные нажатия
     # «Удалить» не смогут удалить и вернуть коины дважды.
     claim = await db.execute(
-        """UPDATE ads SET status = 'deleted', deleted_by = ?, delete_comment = ?,
-                          deleted_at = datetime('now'), unpinned = 1
+        """UPDATE ads SET status = 'deleted', deleted_by = ?, delete_kind = ?,
+                          delete_comment = ?, deleted_at = datetime('now'), unpinned = 1
            WHERE id = ? AND status <> 'deleted'""",
-        (by_admin_id, comment, ad_id))
+        (by_admin_id, kind, comment, ad_id))
     if not claim.rowcount:
         return {"already": True, "refunded": 0, "user_id": ad["user_id"]}
 
@@ -230,7 +256,7 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
     if ad["channel_message_id"]:
         await site_db.mark_deleted(ad["channel_id"], ad["channel_message_id"])
 
-    if bot:
+    if bot and kind != "author":
         note = (f"🗑 Ваше объявление удалено администрацией.\n\n"
                 f"<b>Комментарий:</b> {html.escape(comment)}" if comment else
                 "🗑 Ваше объявление удалено администрацией.")
@@ -243,8 +269,9 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
 
     await action_log.action(ad["channel_id"] or 0, by_admin_id or 0, None,
                             f"объявление #{ad_id}, возврат {refunded}, коммент: {comment or '-'}",
-                            event="удаление объявления")
-    return {"already": False, "refunded": refunded, "user_id": ad["user_id"], "ad": dict(ad)}
+                            event=f"удаление объявления ({kind})")
+    return {"already": False, "refunded": refunded, "user_id": ad["user_id"],
+            "delete_kind": kind, "ad": dict(ad)}
 
 
 # ------------------------------------------------------------------ снятие закрепа

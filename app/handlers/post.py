@@ -1,7 +1,11 @@
 """Создание объявления в личке бота.
 
-Мастер (FSM): правила -> подписка -> рубрика -> вертикаль -> текст -> картинка ->
-закреп -> подтверждение -> публикация. Каждый шаг можно отменить кнопкой «❌ Отмена».
+Мастер (FSM): правила -> подписка -> рубрика -> вертикаль -> текст -> соцсети
+(только рубрика «Интро/Знакомства») -> картинка -> закреп -> подтверждение ->
+публикация. Каждый шаг можно отменить кнопкой «❌ Отмена».
+
+В тексте объявления запрещены ссылки и форматирование — проверка живёт в
+app/text_rules.py и применяется на шаге Post.text (в т. ч. при «✏️ Изменить текст»).
 """
 import html
 import logging
@@ -15,7 +19,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
                            Message)
 
-from app import ads, db, keyboards, locks, subscription, tokens
+from app import ads, db, keyboards, locks, subscription, text_rules, tokens
 
 log = logging.getLogger(__name__)
 router = Router(name="post")
@@ -25,6 +29,22 @@ MAX_TEXT_LEN = 3500
 
 CANCEL_BTN = InlineKeyboardButton(text="❌ Отмена", callback_data="ads_cancel")
 
+# Пометка рубрики «Интро/Знакомства» (ad_types.note). Тег рубрики админ может
+# переименовать, поэтому смотрим и на note, и на tag.
+INTRO_MARK = "intro"
+
+SOCIALS_PROMPT = (
+    "Добавь ссылки на свои соцсети (каждая с новой строки) или нажми «Пропустить».\n\n"
+    "<b>Нельзя указывать корпоративный сайт или канал! Только личные соц. сети "
+    "или авторский блог! Такие объявления будут удалены.</b>")
+
+
+def is_intro_type(row) -> bool:
+    """Рубрика «Интро/Знакомства» — у неё спрашиваем соцсети."""
+    if row is None:
+        return False
+    return INTRO_MARK in {row["note"], row["tag"]}
+
 
 class Post(StatesGroup):
     rules = State()
@@ -32,6 +52,7 @@ class Post(StatesGroup):
     ad_type = State()
     vertical = State()
     text = State()
+    socials = State()          # только для рубрики «Интро/Знакомства»
     image_choice = State()
     image = State()
     pin = State()
@@ -131,6 +152,21 @@ async def _step_text(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
         reply_markup=_kb([]))
 
 
+async def _step_socials(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
+    await state.set_state(Post.socials)
+    kb = _kb([[InlineKeyboardButton(text="Пропустить", callback_data="ads_soc_skip")]])
+    await bot.send_message(chat_id, SOCIALS_PROMPT, reply_markup=kb)
+
+
+async def _after_text(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
+    """Что идёт после текста: для «Интро» — соцсети, для остальных — сразу картинка."""
+    data = await state.get_data()
+    if data.get("is_intro"):
+        await _step_socials(chat_id, state, bot, user)
+        return
+    await _step_image(chat_id, state, bot, user)
+
+
 async def _step_image(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
     data = await state.get_data()
     if data.get("media_file_id"):
@@ -162,7 +198,7 @@ async def _step_confirm(chat_id: int, state: FSMContext, bot: Bot, user) -> None
     await state.set_state(Post.confirm)
     data = await state.get_data()
     body = ads.format_ad(data.get("text", ""), data.get("ad_type_tag"), data.get("vertical_tag"),
-                         user.username)
+                         user.username, data.get("socials"))
     has_image = bool(data.get("media_file_id"))
     pin_hours = int(data.get("pin_hours") or 0)
 
@@ -221,9 +257,11 @@ async def cb_ad_type(callback: CallbackQuery, state: FSMContext, bot: Bot) -> No
     if not row:
         await callback.message.answer("Рубрика не найдена, попробуй ещё раз.")
         return
-    await state.update_data(ad_type_id=row["id"], ad_type_name=row["name"], ad_type_tag=row["tag"])
+    intro = is_intro_type(row)
+    await state.update_data(ad_type_id=row["id"], ad_type_name=row["name"],
+                            ad_type_tag=row["tag"], is_intro=intro)
     chat_id = callback.message.chat.id
-    if row["note"] == "intro":
+    if intro:
         await bot.send_message(chat_id, await db.get_setting("intro_note"))
     user = callback.from_user
     if row["has_vertical"]:
@@ -266,17 +304,50 @@ async def on_text(message: Message, state: FSMContext, bot: Bot) -> None:
         await message.answer(f"Слишком длинный текст ({len(body)} символов из {MAX_TEXT_LEN}). "
                              f"Сократи и пришли ещё раз.")
         return
+    # Ссылки и форматирование в тексте объявления запрещены (см. app/text_rules.py).
+    # Текст может прийти подписью к фото — тогда и entities лежат в caption_entities.
+    entities = message.caption_entities if is_photo else message.entities
+    violations = text_rules.find_violations(body, entities)
+    if violations:
+        # остаёмся в Post.text — ждём тот же текст ещё раз, уже без ссылок
+        await message.answer(text_rules.violations_text(violations))
+        return
     update = {"text": body}
     if is_photo:
         update["media_type"] = "photo"
         update["media_file_id"] = message.photo[-1].file_id
     await state.update_data(**update)
-    await _step_image(message.chat.id, state, bot, message.from_user)
+    await _after_text(message.chat.id, state, bot, message.from_user)
 
 
 @router.message(Post.text, _not_command)
 async def on_text_invalid(message: Message) -> None:
     await message.answer("Пришли текст объявления сообщением, либо фото с подписью-текстом.")
+
+
+# ------------------------------------------------------------------ соцсети («Интро»)
+@router.callback_query(Post.socials, F.data == "ads_soc_skip")
+async def cb_socials_skip(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    await state.update_data(socials=None)
+    await callback.answer()
+    await _step_image(callback.message.chat.id, state, bot, callback.from_user)
+
+
+@router.message(Post.socials, _not_command, F.text)
+async def on_socials(message: Message, state: FSMContext, bot: Bot) -> None:
+    links, errors = text_rules.parse_socials(message.text or "", message.entities)
+    if errors:
+        # остаёмся в Post.socials — можно прислать заново или нажать «Пропустить»
+        await message.answer(text_rules.socials_errors_text(errors))
+        return
+    await state.update_data(socials="\n".join(links))
+    await _step_image(message.chat.id, state, bot, message.from_user)
+
+
+@router.message(Post.socials, _not_command)
+async def on_socials_invalid(message: Message) -> None:
+    await message.answer("Пришли ссылки на соцсети текстом (каждую с новой строки) "
+                         "или нажми «Пропустить».")
 
 
 # ------------------------------------------------------------------ картинка
@@ -361,7 +432,8 @@ async def _do_publish(callback: CallbackQuery, state: FSMContext, bot: Bot, user
     try:
         res = await ads.publish_ad(bot, user, text=text, ad_type_row=ad_type_row,
                                    vertical_row=vertical_row, media_type=media_type,
-                                   media_file_id=media_file_id, pin_hours=pin_hours)
+                                   media_file_id=media_file_id, pin_hours=pin_hours,
+                                   socials=data.get("socials"))
     except ads.AdError as exc:
         msg = html.escape(str(exc))
         if "коин" in str(exc).lower():

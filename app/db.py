@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS ads (
     vertical_name      TEXT,
     vertical_tag       TEXT,
     text               TEXT,
+    socials            TEXT,                       -- ссылки на соцсети (рубрика «Интро»)
     media_type         TEXT,
     media_file_id      TEXT,
     cost_base          INTEGER DEFAULT 0,
@@ -174,6 +175,7 @@ CREATE TABLE IF NOT EXISTS ads (
     unpinned           INTEGER DEFAULT 0,
     status             TEXT DEFAULT 'published',   -- published | deleted
     deleted_by         INTEGER,
+    delete_kind        TEXT,                       -- author | moderator (кто удалил)
     delete_comment     TEXT,
     deleted_at         TEXT,
     refunded           INTEGER DEFAULT 0,
@@ -313,15 +315,28 @@ USERS_ADDED_COLUMNS: dict[str, str] = {
 }
 
 
-async def _migrate(conn_: aiosqlite.Connection) -> None:
-    """Добавляет в users недостающие колонки (идемпотентно)."""
-    async with conn_.execute("PRAGMA table_info(users)") as cur:
+# Колонки ads, добавленные после первого релиза — тем же способом, что и users.
+ADS_ADDED_COLUMNS: dict[str, str] = {
+    "socials":     "TEXT",   # ссылки на соцсети (шаг мастера для рубрики «Интро»)
+    "delete_kind": "TEXT",   # author | moderator; NULL у старых строк = удалял модератор
+}
+
+
+async def _migrate_table(conn_: aiosqlite.Connection, table: str,
+                         columns: dict[str, str]) -> None:
+    """Добавляет в таблицу недостающие колонки (идемпотентно)."""
+    async with conn_.execute(f"PRAGMA table_info({table})") as cur:
         existing = {row[1] for row in await cur.fetchall()}
-    for name, decl in USERS_ADDED_COLUMNS.items():
+    for name, decl in columns.items():
         if name in existing:
             continue
-        await conn_.execute(f"ALTER TABLE users ADD COLUMN {name} {decl}")
-        log.info("Миграция: users.%s добавлена", name)
+        await conn_.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        log.info("Миграция: %s.%s добавлена", table, name)
+
+
+async def _migrate(conn_: aiosqlite.Connection) -> None:
+    await _migrate_table(conn_, "users", USERS_ADDED_COLUMNS)
+    await _migrate_table(conn_, "ads", ADS_ADDED_COLUMNS)
 
 
 def now_ts() -> int:
@@ -546,7 +561,47 @@ async def user_card(user_id: int) -> Optional[dict]:
     card["channels"] = [dict(c) for c in await fetchall(
         """SELECT channel_id, subscribed, first_subscribed_at, updated_at
              FROM channel_subs WHERE user_id = ? ORDER BY channel_id""", (user_id,))]
+    card.update(await user_violations(user_id))
     return card
+
+
+# ---------------------------------------------------------------- удаления и нарушения
+async def user_violations(user_id: int) -> dict[str, int]:
+    """Сколько объявлений пользователя удалено и сколько из них — модератором.
+
+    Удаление модератором считаем нарушением. У строк, созданных до появления
+    delete_kind, значение NULL — это всегда были удаления администрацией
+    (самоудаления в боте не было), поэтому NULL приравниваем к 'moderator'.
+    """
+    row = await fetchone(
+        """SELECT COUNT(*) AS deleted_total,
+                  SUM(CASE WHEN COALESCE(delete_kind, 'moderator') = 'moderator'
+                           THEN 1 ELSE 0 END) AS deleted_by_moderator
+             FROM ads WHERE user_id = ? AND status = 'deleted'""",
+        (user_id,))
+    return {"deleted_total": int(row["deleted_total"] or 0) if row else 0,
+            "deleted_by_moderator": int(row["deleted_by_moderator"] or 0) if row else 0}
+
+
+async def deleted_ads(username: str = "", limit: int = 50,
+                      offset: int = 0) -> tuple[list[dict], int]:
+    """Удалённые объявления для вкладки админки. Фильтр — по @username или user_id."""
+    where = ["a.status = 'deleted'"]
+    args: list = []
+    ident = (username or "").strip().lstrip("@")
+    if ident:
+        where.append("(lower(u.username) = ? OR CAST(a.user_id AS TEXT) = ?)")
+        args += [ident.lower(), ident]
+    clause = " AND ".join(where)
+    rows = await fetchall(
+        f"""SELECT a.*, u.username AS username, u.full_name AS full_name
+              FROM ads a LEFT JOIN users u ON u.user_id = a.user_id
+             WHERE {clause} ORDER BY a.id DESC LIMIT ? OFFSET ?""",
+        (*args, max(1, min(int(limit), 200)), max(0, int(offset))))
+    total = await scalar(
+        f"""SELECT COUNT(*) FROM ads a LEFT JOIN users u ON u.user_id = a.user_id
+             WHERE {clause}""", args)
+    return [dict(r) for r in rows], int(total or 0)
 
 
 async def get_user(user_id: int) -> Optional[aiosqlite.Row]:

@@ -30,16 +30,25 @@ def topup_kb(bot_username: str) -> InlineKeyboardMarkup:
 
 BTN_CHANNEL = "📣 Канал Aff Bazaar"
 BTN_SITE = "🌐 Наш сайт"
+# Кнопка рефералов подписывается текущим бонусом, поэтому сравнивать её текст
+# можно только по префиксу — см. user.is_menu_button().
+BTN_REFERRAL = "👥 Пригласить друга"
 
 
-def main_menu() -> ReplyKeyboardMarkup:
+def referral_btn(bonus: int) -> str:
+    return f"{BTN_REFERRAL} (Получи {bonus} коинов!)"
+
+
+async def main_menu(bonus: Optional[int] = None) -> ReplyKeyboardMarkup:
     # Mini App пока убрана (кнопка web_app и Menu Button): вместо неё две ссылки — канал и сайт.
+    if bonus is None:
+        bonus = await db.get_int("referral_bonus")
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_CHANNEL), KeyboardButton(text=BTN_SITE)],
             [KeyboardButton(text="📢 Создать объявление")],
             [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="💎 Купить коины")],
-            [KeyboardButton(text="👥 Пригласить друга"), KeyboardButton(text="📊 Мой профиль")],
+            [KeyboardButton(text=referral_btn(bonus)), KeyboardButton(text="📊 Мой профиль")],
             [KeyboardButton(text="📜 Правила")],
         ],
         resize_keyboard=True,

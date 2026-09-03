@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS posts (
     author_username    TEXT,
     author_name        TEXT,
     text               TEXT,
+    socials            TEXT,          -- ссылки на соцсети (рубрика «Интро»)
     media_type         TEXT,
     media_file_id      TEXT,
     ad_type_name       TEXT,
@@ -49,6 +50,7 @@ MIGRATIONS = [
     ("ad_type_name", "TEXT"), ("ad_type_tag", "TEXT"),
     ("vertical_name", "TEXT"), ("vertical_tag", "TEXT"),
     ("pinned_until", "TEXT"), ("search_blob", "TEXT"),
+    ("socials", "TEXT"),
 ]
 
 
@@ -96,16 +98,17 @@ async def mirror_post(**kw) -> None:
     await conn().execute(
         """INSERT INTO posts(source_chat_id, source_chat_title, source_message_id, channel_id,
                              channel_message_id, author_id, author_username, author_name,
-                             text, media_type, media_file_id, ad_type_name, ad_type_tag,
-                             vertical_name, vertical_tag, pinned_until, search_blob,
-                             is_reposted, created_at)
+                             text, socials, media_type, media_file_id, ad_type_name,
+                             ad_type_tag, vertical_name, vertical_tag, pinned_until,
+                             search_blob, is_reposted, created_at)
            VALUES (:source_chat_id, :source_chat_title, :source_message_id, :channel_id,
                    :channel_message_id, :author_id, :author_username, :author_name,
-                   :text, :media_type, :media_file_id, :ad_type_name, :ad_type_tag,
-                   :vertical_name, :vertical_tag, :pinned_until, :search_blob, :is_reposted,
-                   datetime('now'))
+                   :text, :socials, :media_type, :media_file_id, :ad_type_name,
+                   :ad_type_tag, :vertical_name, :vertical_tag, :pinned_until,
+                   :search_blob, :is_reposted, datetime('now'))
            ON CONFLICT(source_chat_id, source_message_id) DO UPDATE SET
                text = excluded.text,
+               socials = COALESCE(excluded.socials, posts.socials),
                channel_message_id = COALESCE(excluded.channel_message_id, posts.channel_message_id),
                is_reposted = MAX(posts.is_reposted, excluded.is_reposted),
                ad_type_name = COALESCE(excluded.ad_type_name, posts.ad_type_name),
@@ -124,6 +127,7 @@ async def mirror_post(**kw) -> None:
             "author_username": kw.get("author_username"),
             "author_name": kw.get("author_name"),
             "text": kw.get("text"),
+            "socials": kw.get("socials"),
             "media_type": kw.get("media_type"),
             "media_file_id": kw.get("media_file_id"),
             "ad_type_name": kw.get("ad_type_name"),
