@@ -96,9 +96,41 @@ def _entity_reasons(entities: Optional[Iterable], table: dict[str, str]) -> list
     return found
 
 
+# Невидимые символы, которыми «разрывают» домен: t.m<zwsp>e
+_ZERO_WIDTH_RE = re.compile("[​‌‍⁠﻿­]")
+# Точки-двойники: t․me (U+2024), t．me (U+FF0E), 。 и т.п.
+_FAKE_DOTS_RE = re.compile("[․‧。．｡]")
+# «example[.]com», «example(dot)com», «example{точка}com»
+_BRACKET_DOT_RE = re.compile(r"[\[\(\{<]\s*(?:\.|dot|точка)\s*[\]\)\}>]", re.IGNORECASE)
+# «example dot com», «пример точка ру» — слово-разделитель между двумя словами
+_WORD_DOT_RE = re.compile(r"(?<=[\w])\s+(?:dot|точка)\s+(?=[\w])", re.IGNORECASE)
+# «example . com» — пробелы вокруг точки. Схлопываем только перед известной зоной,
+# иначе «Пишите . Отвечу» превратилось бы в «домен».
+_SPACED_DOT_TLDS = (
+    "com|net|org|ru|io|me|co|app|xyz|site|online|shop|store|pro|biz|info|dev|ai|link|club|vip|"
+    "top|cc|tv|fun|cash|bet|casino|one|live|life|pw|ws|cloud|page|team|agency|guru|рф|su"
+)
+_SPACED_DOT_RE = re.compile(
+    rf"(?<=[\w])\s*\.\s*(?=(?:{_SPACED_DOT_TLDS})(?![\wа-яё]))", re.IGNORECASE)
+
+
+def normalize_for_links(text: str) -> str:
+    """Снимает типовые приёмы маскировки ссылок, чтобы регулярки увидели домен."""
+    text = _ZERO_WIDTH_RE.sub("", text or "")
+    text = _FAKE_DOTS_RE.sub(".", text)
+    text = _BRACKET_DOT_RE.sub(".", text)
+    text = _WORD_DOT_RE.sub(".", text)
+    text = _SPACED_DOT_RE.sub(".", text)
+    return text
+
+
 def find_links(text: str) -> list[str]:
-    """Находит в обычном тексте ссылки и домены. Возвращает найденные куски."""
-    text = text or ""
+    """Находит в обычном тексте ссылки и домены. Возвращает найденные куски.
+
+    Перед поиском текст нормализуется (normalize_for_links): «example[.]com»,
+    «example . com», юникод-точки и невидимые символы — тоже ссылки.
+    """
+    text = normalize_for_links(text)
     found: list[str] = []
 
     def add(value: str) -> None:

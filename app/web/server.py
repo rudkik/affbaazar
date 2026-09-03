@@ -151,7 +151,9 @@ async def branding_logo():
     path = logo_path()
     if not path.exists():
         raise HTTPException(404, "Логотип не найден")
-    media_type = _logo_media_type(path.read_bytes()[:16]) or "image/png"
+    with path.open("rb") as fh:                    # для сигнатуры хватит первых 16 байт
+        head = fh.read(16)
+    media_type = _logo_media_type(head) or "image/png"
     return FileResponse(path, media_type=media_type)
 
 
