@@ -1,5 +1,6 @@
 """Независимая база-дублёр для сайта (лайв-лента репостов)."""
 import logging
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import aiosqlite
@@ -163,10 +164,49 @@ async def mark_reposted(source_chat_id: int, source_message_id: int,
     await conn().commit()
 
 
+# Периоды фильтра «Дата публикации» на сайте. Границы считаются в UTC — created_at
+# пишется через datetime('now'), то есть тоже в UTC. Неделя начинается с понедельника.
+PERIODS = ("today", "yesterday", "this_week", "last_week", "last_2d", "last_3d",
+           "last_7d", "last_14d", "last_30d", "this_month", "last_month", "all")
+
+
+def _month_start(day: date, shift: int = 0) -> date:
+    """Первое число месяца дня day, сдвинутое на shift месяцев назад/вперёд."""
+    month = day.month - 1 + shift
+    year = day.year + month // 12
+    return date(year, month % 12 + 1, 1)
+
+
+def period_bounds(period: str, today: Optional[date] = None) -> tuple[Optional[str], Optional[str]]:
+    """Границы периода [начало, конец) в формате created_at ('YYYY-MM-DD HH:MM:SS')."""
+    if period not in PERIODS or period == "all":
+        return None, None
+    today = today or datetime.now(timezone.utc).date()
+    tomorrow = today + timedelta(days=1)
+    week_start = today - timedelta(days=today.weekday())     # понедельник текущей недели
+
+    if period == "today":
+        start, end = today, tomorrow
+    elif period == "yesterday":
+        start, end = today - timedelta(days=1), today
+    elif period == "this_week":
+        start, end = week_start, week_start + timedelta(days=7)
+    elif period == "last_week":
+        start, end = week_start - timedelta(days=7), week_start
+    elif period == "this_month":
+        start, end = _month_start(today), _month_start(today, 1)
+    elif period == "last_month":
+        start, end = _month_start(today, -1), _month_start(today)
+    else:                                                     # last_2d … last_30d
+        days = int(period[len("last_"):-1])
+        start, end = today - timedelta(days=days - 1), tomorrow
+    return f"{start} 00:00:00", f"{end} 00:00:00"
+
+
 async def query_posts(q: str = "", chat_id: Optional[int] = None, author: str = "",
                       media: str = "", ad_type: str = "", vertical: str = "",
                       only_pinned: bool = False, only_reposted: bool = False,
-                      sort: str = "created_at", order: str = "desc",
+                      period: str = "all", sort: str = "created_at", order: str = "desc",
                       limit: int = 50, offset: int = 0,
                       after_id: Optional[int] = None) -> tuple[list[dict], int]:
     where = ["is_deleted = 0"]
@@ -194,6 +234,10 @@ async def query_posts(q: str = "", chat_id: Optional[int] = None, author: str = 
             args.append(media)
     if only_reposted:
         where.append("is_reposted = 1")
+    start, end = period_bounds(period)
+    if start and end:
+        where.append("created_at >= ? AND created_at < ?")
+        args += [start, end]
     if after_id:
         where.append("id > ?")
         args.append(after_id)
