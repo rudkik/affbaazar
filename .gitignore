@@ -13,3 +13,4 @@ logs-restricted/
 *.bak
 backups/
 server-info/
+.claude/
