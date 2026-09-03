@@ -32,7 +32,8 @@ async def guard(message: Message, bot: Bot) -> None:
                                 "pinned_message", "forum_topic_created"}:
         return
 
-    await db.upsert_user(user.id, user.username, user.full_name)
+    await db.upsert_user(user.id, user.username, user.full_name,
+                         user.first_name, user.last_name)
     text = services.message_text(message)
     await action_log.action(chat_id, user.id, user.username, text)
 

@@ -1,6 +1,7 @@
 """Основная база бота (SQLite/aiosqlite) + доступ к настройкам."""
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
@@ -41,9 +42,17 @@ CREATE TABLE IF NOT EXISTS users (
     user_id           INTEGER PRIMARY KEY,
     username          TEXT,
     full_name         TEXT,
+    first_name        TEXT,
+    last_name         TEXT,
+    bio               TEXT,
     tokens            INTEGER DEFAULT 0,
-    activated         INTEGER DEFAULT 0,
+    activated         INTEGER DEFAULT 0,   -- выдан бонус за подписку (не «нажал /start» — см. started)
     activated_at      TEXT,
+    started           INTEGER DEFAULT 0,   -- нажал /start хотя бы раз
+    started_at        INTEGER,             -- unix, первый /start
+    subscribed        INTEGER DEFAULT 0,   -- подписан на основной канал сейчас
+    first_subscribed_at INTEGER,           -- unix, первая подписка на основной канал
+    last_seen_at      INTEGER,             -- unix, последнее событие от юзера
     referrer_id       INTEGER,
     referral_rewarded INTEGER DEFAULT 0,
     messages_sent     INTEGER DEFAULT 0,
@@ -52,6 +61,18 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id);
+
+-- Подписки на любые каналы (основной + обязательные). Заменяет «резервные»
+-- колонки канал2-канал5 из ТЗ: количество каналов не ограничено.
+CREATE TABLE IF NOT EXISTS channel_subs (
+    user_id             INTEGER NOT NULL,
+    channel_id          INTEGER NOT NULL,
+    subscribed          INTEGER DEFAULT 0,
+    first_subscribed_at INTEGER,           -- unix, ставится один раз
+    updated_at          INTEGER,           -- unix, последнее обновление статуса
+    PRIMARY KEY (user_id, channel_id)
+);
+CREATE INDEX IF NOT EXISTS idx_channel_subs_channel ON channel_subs(channel_id);
 
 CREATE TABLE IF NOT EXISTS user_chat_state (
     user_id            INTEGER NOT NULL,
@@ -276,6 +297,38 @@ async def _seed_rubrics(conn_: aiosqlite.Connection) -> None:
             (name, make_tag(name), position))
 
 
+# Колонки users, добавленные после первого релиза. На проде базы уже существуют,
+# а CREATE TABLE IF NOT EXISTS их не тронет — поэтому при init() догоняем ALTER-ами.
+# Не путать: users.activated / activated_at (TEXT) — «выдан бонус за подписку» (tokens.py),
+# а started / started_at (unix) — «нажал /start», это и есть «активация бота» из ТЗ.
+USERS_ADDED_COLUMNS: dict[str, str] = {
+    "first_name":          "TEXT",
+    "last_name":           "TEXT",
+    "bio":                 "TEXT",
+    "started":             "INTEGER DEFAULT 0",
+    "started_at":          "INTEGER",
+    "subscribed":          "INTEGER DEFAULT 0",
+    "first_subscribed_at": "INTEGER",
+    "last_seen_at":        "INTEGER",
+}
+
+
+async def _migrate(conn_: aiosqlite.Connection) -> None:
+    """Добавляет в users недостающие колонки (идемпотентно)."""
+    async with conn_.execute("PRAGMA table_info(users)") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    for name, decl in USERS_ADDED_COLUMNS.items():
+        if name in existing:
+            continue
+        await conn_.execute(f"ALTER TABLE users ADD COLUMN {name} {decl}")
+        log.info("Миграция: users.%s добавлена", name)
+
+
+def now_ts() -> int:
+    """Текущее время в unix-секундах — формат всех новых полей времени."""
+    return int(time.time())
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -301,6 +354,7 @@ async def init() -> aiosqlite.Connection:
     _conn = await aiosqlite.connect(MAIN_DB)
     _conn.row_factory = aiosqlite.Row
     await _conn.executescript(SCHEMA)
+    await _migrate(_conn)
     for key, value in DEFAULT_SETTINGS.items():
         await _conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
     await _seed_rubrics(_conn)
@@ -375,16 +429,124 @@ async def all_settings() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------- пользователи
-async def upsert_user(user_id: int, username: Optional[str], full_name: Optional[str]) -> None:
+PROFILE_FIELDS = ("username", "first_name", "last_name", "full_name", "bio")
+
+
+async def upsert_user_profile(user_id: int, *, username: Optional[str] = None,
+                              first_name: Optional[str] = None,
+                              last_name: Optional[str] = None,
+                              full_name: Optional[str] = None,
+                              bio: Optional[str] = None,
+                              seen: bool = True) -> None:
+    """Создаёт/обновляет карточку пользователя.
+
+    Поля, переданные как None, НЕ затираются: события приходят из разных мест
+    (сообщение в чате, /start, chat_member) и знают разный набор данных.
+    """
+    values = {"username": username, "first_name": first_name, "last_name": last_name,
+              "full_name": full_name, "bio": bio}
+    fields = {k: v for k, v in values.items() if v is not None}
+    if seen:
+        fields["last_seen_at"] = now_ts()
+    cols = ", ".join(("user_id", *fields))
+    marks = ", ".join("?" for _ in range(len(fields) + 1))
+    sets = "".join(f"{k} = excluded.{k}, " for k in fields) + "updated_at = datetime('now')"
     await execute(
-        """INSERT INTO users(user_id, username, full_name)
-           VALUES (?, ?, ?)
-           ON CONFLICT(user_id) DO UPDATE SET
-               username   = excluded.username,
-               full_name  = excluded.full_name,
-               updated_at = datetime('now')""",
-        (user_id, username, full_name),
+        f"INSERT INTO users({cols}) VALUES ({marks}) "
+        f"ON CONFLICT(user_id) DO UPDATE SET {sets}",
+        (user_id, *fields.values()),
     )
+
+
+async def upsert_user(user_id: int, username: Optional[str], full_name: Optional[str],
+                      first_name: Optional[str] = None,
+                      last_name: Optional[str] = None) -> None:
+    """Совместимая обёртка: её вызывает весь старый код."""
+    await upsert_user_profile(user_id, username=username, full_name=full_name,
+                              first_name=first_name, last_name=last_name)
+
+
+async def mark_started(user_id: int) -> bool:
+    """Первое нажатие /start: started = 1 и started_at. Повторные не перезаписывают.
+
+    Возвращает True, если это был первый /start.
+    """
+    await execute("INSERT OR IGNORE INTO users(user_id) VALUES (?)", (user_id,))
+    cur = await execute(
+        "UPDATE users SET started = 1, started_at = COALESCE(started_at, ?), "
+        "updated_at = datetime('now') "
+        "WHERE user_id = ? AND (started IS NULL OR started = 0 OR started_at IS NULL)",
+        (now_ts(), user_id))
+    return bool(cur.rowcount)
+
+
+async def record_subscription(user_id: int, channel_id: int, subscribed: bool,
+                              is_main: Optional[bool] = None) -> None:
+    """Единая точка записи подписки: channel_subs + (для основного канала) users.
+
+    first_subscribed_at ставится один раз и при выходе из канала не сбрасывается.
+    is_main=None -> определяем сами по настройке ad_channel_id.
+    """
+    if not channel_id:
+        return
+    ts = now_ts()
+    flag = 1 if subscribed else 0
+    first = ts if flag else None
+    await execute("INSERT OR IGNORE INTO users(user_id) VALUES (?)", (user_id,))
+    await execute(
+        """INSERT INTO channel_subs(user_id, channel_id, subscribed,
+                                    first_subscribed_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, channel_id) DO UPDATE SET
+               subscribed          = excluded.subscribed,
+               first_subscribed_at = COALESCE(channel_subs.first_subscribed_at,
+                                              excluded.first_subscribed_at),
+               updated_at          = excluded.updated_at""",
+        (user_id, channel_id, flag, first, ts),
+    )
+    if is_main is None:
+        is_main = channel_id == await get_int("ad_channel_id")
+    if is_main:
+        await execute(
+            "UPDATE users SET subscribed = ?, "
+            "first_subscribed_at = COALESCE(first_subscribed_at, ?), "
+            "updated_at = datetime('now') WHERE user_id = ?",
+            (flag, first, user_id),
+        )
+
+
+async def channel_sub(user_id: int, channel_id: int) -> Optional[aiosqlite.Row]:
+    return await fetchone(
+        "SELECT * FROM channel_subs WHERE user_id = ? AND channel_id = ?",
+        (user_id, channel_id))
+
+
+async def user_card(user_id: int) -> Optional[dict]:
+    """Полная карточка пользователя по ТЗ, реферер подтягивается JOIN-ом.
+
+    referrer_id — TG ID реферера (он же его user_id в этой базе);
+    referrer_db_id — его id в этой базе (NULL, если такого юзера у нас нет);
+    referrer_username — никнейм. Если реферала нет, все три — None.
+    """
+    row = await fetchone(
+        """SELECT u.user_id, u.username, u.first_name, u.last_name, u.full_name, u.bio,
+                  u.tokens, u.messages_sent, u.activated, u.activated_at,
+                  u.started, u.started_at, u.subscribed, u.first_subscribed_at,
+                  u.last_seen_at, u.created_at, u.updated_at,
+                  u.referrer_id,
+                  r.user_id  AS referrer_db_id,
+                  r.username AS referrer_username
+             FROM users u
+             LEFT JOIN users r ON r.user_id = u.referrer_id
+            WHERE u.user_id = ?""",
+        (user_id,))
+    if row is None:
+        return None
+    card = dict(row)
+    card["channels"] = [dict(c) for c in await fetchall(
+        """SELECT channel_id, subscribed, first_subscribed_at, updated_at
+             FROM channel_subs WHERE user_id = ? ORDER BY channel_id""", (user_id,))]
+    return card
 
 
 async def get_user(user_id: int) -> Optional[aiosqlite.Row]:

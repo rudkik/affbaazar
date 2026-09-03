@@ -1,10 +1,11 @@
 """Клавиатуры бота."""
 import json
+from typing import Optional
 
 from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
-                           KeyboardButton, ReplyKeyboardMarkup, WebAppInfo)
+                           KeyboardButton, ReplyKeyboardMarkup)
 
-from app import config, db, subscription
+from app import db, subscription
 
 
 async def subscribe_kb(missing: list, bot_username: str) -> InlineKeyboardMarkup:
@@ -27,21 +28,31 @@ def topup_kb(bot_username: str) -> InlineKeyboardMarkup:
     ]])
 
 
+BTN_CHANNEL = "📣 Канал Aff Bazaar"
+BTN_SITE = "🌐 Наш сайт"
+
+
 def main_menu() -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text="📢 Создать объявление")]]
-    if config.webapp_available():
-        # Telegram разрешает web_app-кнопки только на HTTPS
-        rows.insert(0, [KeyboardButton(
-            text="🛍 Открыть Aff Bazar",
-            web_app=WebAppInfo(url=config.WEBAPP_URL))])
+    # Mini App пока убрана (кнопка web_app и Menu Button): вместо неё две ссылки — канал и сайт.
     return ReplyKeyboardMarkup(
-        keyboard=rows + [
+        keyboard=[
+            [KeyboardButton(text=BTN_CHANNEL), KeyboardButton(text=BTN_SITE)],
+            [KeyboardButton(text="📢 Создать объявление")],
             [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="💎 Купить коины")],
             [KeyboardButton(text="👥 Пригласить друга"), KeyboardButton(text="📊 Мой профиль")],
             [KeyboardButton(text="📜 Правила")],
         ],
         resize_keyboard=True,
     )
+
+
+def links_kb(channel_url: Optional[str], site_url: str) -> InlineKeyboardMarkup:
+    """Кнопки-ссылки «в канал» и «на сайт» (reply-кнопки не умеют открывать URL)."""
+    rows = []
+    if channel_url:
+        rows.append([InlineKeyboardButton(text=BTN_CHANNEL, url=channel_url)])
+    rows.append([InlineKeyboardButton(text=BTN_SITE, url=site_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_menu() -> ReplyKeyboardMarkup:

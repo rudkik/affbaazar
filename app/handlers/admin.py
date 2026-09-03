@@ -703,6 +703,9 @@ async def do_set_channel(message: Message, raw: str, bot: Bot) -> None:
     title = info["title"] or str(info["channel_id"])
     await db.set_setting("ad_channel_id", info["channel_id"])
     await db.set_setting("ad_channel_title", title)
+    # ссылка для кнопки «Канал Aff Bazaar» в меню пользователя
+    await db.set_setting("ad_channel_username", info.get("username") or "")
+    await db.set_setting("ad_channel_link", info.get("invite_link") or "")
     await message.answer(f"✅ Канал объявлений: {html.escape(title)} "
                          f"(<code>{info['channel_id']}</code>)")
 

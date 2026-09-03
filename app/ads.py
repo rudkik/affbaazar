@@ -11,7 +11,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app import action_log, db, site_db, tokens
+from app import action_log, db, site_db, subscription, tokens
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +84,10 @@ async def is_channel_admin(bot: Bot, user_id: int) -> bool:
     try:
         channel_id, _ = await ad_channel(bot)
         member = await bot.get_chat_member(channel_id, user_id)
+        # заодно фиксируем подписку на основной канал
+        await db.record_subscription(user_id, channel_id,
+                                     member.status in subscription.SUBSCRIBED_STATUSES,
+                                     is_main=True)
         return member.status in {"creator", "administrator"}
     except (AdError, TelegramAPIError):
         return False

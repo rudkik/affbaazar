@@ -21,7 +21,7 @@ router.message.filter(F.chat.type == ChatType.PRIVATE)
 MENU_BUTTONS = {"💰 Баланс", "💎 Купить коины", "💎 Купить токены", "👥 Пригласить друга",
                 "📊 Мой профиль", "📢 Создать объявление", "📜 Правила", "📢 Канал и цены",
                 "📋 Чаты", "⚙️ Глобальные настройки", "💰 Выдать токены", "💰 Выдать коины", "📊 Статистика",
-                "🌐 Веб-панель", "🏠 Меню пользователя"}
+                "🌐 Веб-панель", "🏠 Меню пользователя", keyboards.BTN_CHANNEL, keyboards.BTN_SITE}
 
 
 def _parse_ref(payload: Optional[str]) -> Optional[int]:
@@ -36,11 +36,34 @@ def _parse_ref(payload: Optional[str]) -> Optional[int]:
     return None
 
 
+async def fetch_bio(bot, user_id: int) -> Optional[str]:
+    """Био пользователя: у приватного чата get_chat возвращает поле bio.
+
+    Метода может не быть вовсе (фейковый бот в тестах) — тогда просто None.
+    """
+    getter = getattr(bot, "get_chat", None)
+    if getter is None:
+        return None
+    try:
+        chat = await getter(user_id)
+    except TelegramAPIError as exc:
+        log.debug("Не удалось получить bio для %s: %s", user_id, exc)
+        return None
+    except Exception:  # noqa: BLE001 — чужая реализация может кинуть что угодно
+        return None
+    return getattr(chat, "bio", None)
+
+
 @router.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject, state: FSMContext) -> None:
+async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
+                    bot: Bot) -> None:
     await state.clear()
     user = message.from_user
-    await db.upsert_user(user.id, user.username, user.full_name)
+    bio = await fetch_bio(bot, user.id)
+    await db.upsert_user_profile(user.id, username=user.username, first_name=user.first_name,
+                                 last_name=user.last_name, full_name=user.full_name, bio=bio)
+    # started/started_at фиксируются один раз — при первом /start
+    await db.mark_started(user.id)
 
     referrer_id = _parse_ref(command.args if command else None)
     if referrer_id and referrer_id != user.id:
@@ -135,8 +158,21 @@ async def cmd_ref(message: Message, bot: Bot) -> None:
 
 
 @router.message(Command("site"))
+@router.message(F.text == keyboards.BTN_SITE)
 async def cmd_site(message: Message) -> None:
-    await message.answer(f"🌐 Лента объявлений Aff Bazar: {PUBLIC_URL}/")
+    await message.answer(f"🌐 Лента объявлений Aff Bazar: {PUBLIC_URL}/",
+                         reply_markup=keyboards.links_kb(None, f"{PUBLIC_URL}/"))
+
+
+@router.message(F.text == keyboards.BTN_CHANNEL)
+async def btn_channel(message: Message, bot: Bot) -> None:
+    link = await subscription.ad_channel_link(bot)
+    if not link:
+        await message.answer("Канал пока не подключён — загляните позже.")
+        return
+    title = await db.get_setting("ad_channel_title") or "Aff Bazaar"
+    await message.answer(f"📣 Канал объявлений <b>{html.escape(title)}</b>: {link}",
+                         reply_markup=keyboards.links_kb(link, f"{PUBLIC_URL}/"))
 
 
 # ------------------------------------------------------------------ постинг через бота
@@ -193,7 +229,8 @@ async def publish(bot: Bot, message: Message, chat, source_message_id: Optional[
                   author=None) -> None:
     user = author or message.from_user
     chat_id = int(chat["chat_id"])
-    await db.upsert_user(user.id, user.username, user.full_name)
+    await db.upsert_user(user.id, user.username, user.full_name,
+                         user.first_name, user.last_name)
 
     until = await db.is_restricted(user.id, chat_id)
     if until:

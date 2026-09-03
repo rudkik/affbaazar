@@ -69,7 +69,8 @@ async def cmd_rules(message: Message) -> None:
 @router.message(Command("post"))
 async def cmd_post(message: Message, state: FSMContext, bot: Bot) -> None:
     user = message.from_user
-    await db.upsert_user(user.id, user.username, user.full_name)
+    await db.upsert_user(user.id, user.username, user.full_name,
+                         user.first_name, user.last_name)
     await state.clear()
     await _start_flow(message.chat.id, state, bot, user)
 

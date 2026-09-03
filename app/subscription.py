@@ -52,12 +52,17 @@ async def missing_channels(bot: Bot, user_id: int, chat_id: int) -> list:
         if cached and time.time() - cached[0] < ttl:
             return cached[1]
 
+    main_id = await db.get_int("ad_channel_id")
     missing = []
     for ch in channels:
         try:
             member = await bot.get_chat_member(ch["channel_id"], user_id)
-            if member.status not in SUBSCRIBED_STATUSES:
+            ok = member.status in SUBSCRIBED_STATUSES
+            if not ok:
                 missing.append(dict(ch))
+            # ленивая синхронизация: результат живой проверки кладём в базу
+            await db.record_subscription(user_id, ch["channel_id"], ok,
+                                         is_main=ch["channel_id"] == main_id)
         except TelegramAPIError as exc:
             # Бот не в канале / канал недоступен — не наказываем юзера, но кричим в лог.
             log.warning("Не удалось проверить канал %s для %s: %s", ch["channel_id"], user_id, exc)
@@ -109,6 +114,35 @@ async def verify_channel(bot: Bot, ident: str) -> Optional[dict]:
 REQUIRED_GLOBAL = 0   # chat_id-заглушка для глобального списка обязательных каналов
 
 
+async def ad_channel_link(bot: Optional[Bot] = None) -> Optional[str]:
+    """Публичная ссылка на канал объявлений для кнопки «Канал Aff Bazaar».
+
+    Берётся из настроек (/set_channel их сохраняет); если канал задан раньше и ссылки
+    в настройках нет — запрашивается у Telegram и кэшируется в настройках.
+    """
+    username = await db.get_setting("ad_channel_username")
+    if username:
+        return f"https://t.me/{username}"
+    link = await db.get_setting("ad_channel_link")
+    if link:
+        return link
+    channel_id = await db.get_int("ad_channel_id")
+    if not channel_id or bot is None:
+        return None
+    try:
+        chat = await bot.get_chat(channel_id)
+        if chat.username:
+            await db.set_setting("ad_channel_username", chat.username)
+            return f"https://t.me/{chat.username}"
+        link = chat.invite_link or await bot.export_chat_invite_link(channel_id)
+        if link:
+            await db.set_setting("ad_channel_link", link)
+        return link or None
+    except TelegramAPIError as exc:
+        log.warning("Не удалось получить ссылку на канал объявлений: %s", exc)
+        return None
+
+
 async def missing_for_ads(bot: Bot, user_id: int) -> list:
     """Каналы, на которые юзер не подписан, для публикации объявлений.
 
@@ -129,7 +163,9 @@ async def missing_for_ads(bot: Bot, user_id: int) -> list:
                     "invite_link": None}
         try:
             member = await bot.get_chat_member(channel_id, user_id)
-            return [] if member.status in SUBSCRIBED_STATUSES else [info]
+            ok = member.status in SUBSCRIBED_STATUSES
+            await db.record_subscription(user_id, channel_id, ok, is_main=True)
+            return [] if ok else [info]
         except TelegramAPIError as exc:
             log.warning("Проверка канала объявлений не удалась: %s", exc)
             return []

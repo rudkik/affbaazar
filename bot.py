@@ -9,11 +9,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (BotCommand, BotCommandScopeAllPrivateChats, MenuButtonWebApp,
-                           WebAppInfo)
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButtonDefault
 
 from app import config, db, site_db
-from app.handlers import admin, chat_guard, moderation, payments, post, user
+from app.handlers import admin, chat_guard, members, moderation, payments, post, user
 from app.web.server import app as web_app
 from app.web.server import set_bot
 
@@ -85,6 +84,7 @@ async def main() -> None:
     dp.include_router(payments.router)
     dp.include_router(user.router)
     dp.include_router(chat_guard.router)
+    dp.include_router(members.router)
 
     me = await bot.get_me()
     log.info("Бот запущен: @%s (id=%s)", me.username, me.id)
@@ -93,18 +93,14 @@ async def main() -> None:
     except Exception:  # noqa: BLE001
         log.exception("Не удалось установить меню команд")
 
-    # Кнопка «Приложение» слева от строки ввода: открывает сайт как Telegram Mini App.
-    if config.webapp_available():
-        try:
-            await bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(text="Aff Bazar",
-                                             web_app=WebAppInfo(url=config.WEBAPP_URL)))
-            log.info("Mini App подключён: %s", config.WEBAPP_URL)
-        except Exception:  # noqa: BLE001
-            log.exception("Не удалось установить кнопку Mini App")
-    else:
-        log.warning("WEBAPP_URL не HTTPS (%s) — кнопка Mini App не установлена",
-                    config.WEBAPP_URL)
+    # Mini App пока отключена: сбрасываем кнопку «Приложение» слева от строки ввода на стандартное
+    # меню команд (она хранится на стороне Telegram и иначе останется от прошлых запусков).
+    # Вместо неё в главном меню две кнопки-ссылки: канал и сайт (keyboards.main_menu).
+    try:
+        await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+        log.info("Mini App отключена, кнопка меню сброшена; сайт: %s", config.PUBLIC_URL)
+    except Exception:  # noqa: BLE001
+        log.exception("Не удалось сбросить кнопку меню")
 
     web_task = asyncio.create_task(run_web(bot))
     pin_task = asyncio.create_task(pin_watcher(bot))
@@ -112,7 +108,13 @@ async def main() -> None:
 
     try:
         await bot.delete_webhook(drop_pending_updates=False)
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        # chat_member добавляем явно: без него Telegram не пришлёт вход/выход
+        # в канале (учёт подписчиков в app/handlers/members.py).
+        allowed = dp.resolve_used_update_types()
+        if "chat_member" not in allowed:
+            allowed.append("chat_member")
+        log.info("Слушаем апдейты: %s", ", ".join(allowed))
+        await dp.start_polling(bot, allowed_updates=allowed)
     finally:
         web_task.cancel()
         pin_task.cancel()

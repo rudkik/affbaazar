@@ -77,7 +77,8 @@ def _set_session(response, user: dict) -> None:
 
 async def _remember(user: dict) -> None:
     full_name = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x)
-    await db.upsert_user(int(user["id"]), user.get("username"), full_name or None)
+    await db.upsert_user(int(user["id"]), user.get("username"), full_name or None,
+                         user.get("first_name"), user.get("last_name"))
 
 
 def require_admin(request: Request) -> bool:
@@ -288,15 +289,31 @@ async def admin_users(q: str = "", limit: int = 50, offset: int = 0,
                       _: bool = Depends(require_admin)):
     where, args = "", []
     if q:
-        where = ("WHERE username LIKE ? OR full_name LIKE ? OR CAST(user_id AS TEXT) LIKE ?")
+        # колонки квалифицируем: ниже есть self-join на реферера, иначе «ambiguous column»
+        where = ("WHERE u.username LIKE ? OR u.full_name LIKE ? "
+                 "OR CAST(u.user_id AS TEXT) LIKE ?")
         like = f"%{q}%"
         args = [like, like, like]
+    # u.* отдаёт и новые поля учёта (first_name/last_name/bio/started/subscribed/…),
+    # реферер подтягивается JOIN-ом — фронт использует поля по имени, лишние не мешают.
     rows = await db.fetchall(
-        f"""SELECT u.*, (SELECT COUNT(*) FROM users r WHERE r.referrer_id = u.user_id) AS invited
-            FROM users u {where} ORDER BY u.updated_at DESC LIMIT ? OFFSET ?""",
+        f"""SELECT u.*, (SELECT COUNT(*) FROM users r2 WHERE r2.referrer_id = u.user_id) AS invited,
+                   r.user_id AS referrer_db_id, r.username AS referrer_username
+            FROM users u
+            LEFT JOIN users r ON r.user_id = u.referrer_id
+            {where} ORDER BY u.updated_at DESC LIMIT ? OFFSET ?""",
         (*args, min(limit, 200), offset))
     total = await db.scalar(f"SELECT COUNT(*) FROM users u {where}", args)
     return {"items": [dict(r) for r in rows], "total": total}
+
+
+@app.get("/admin/api/users/{user_id}/card")
+async def admin_user_card(user_id: int, _: bool = Depends(require_admin)):
+    """Полная карточка пользователя по ТЗ: профиль, реферер, подписки на каналы."""
+    card = await db.user_card(user_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return card
 
 
 @app.post("/admin/api/users/{user_id}/tokens")
