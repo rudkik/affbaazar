@@ -1,5 +1,7 @@
 #!/bin/bash
 # Проверяет, что A-запись домена (по умолчанию $DOMAIN) смотрит на публичный IP этого сервера.
+# Если домен проксирован через Cloudflare («оранжевое облако»), DNS отдаёт IP Cloudflare — это нормально:
+# проверка проходит с предупреждением, сертификат Caddy выпустит через HTTP-01 сквозь прокси.
 source "$(dirname "$0")/common.sh"
 HOST="${1:-$DOMAIN}"
 
@@ -15,6 +17,11 @@ fi
 
 if echo " $RESOLVED" | grep -q " $MY_IP"; then
     green "✔ DNS: ${HOST} → ${MY_IP}"
+elif [ -n "$RESOLVED" ] && all_cloudflare_ips $RESOLVED; then
+    yellow "! DNS: ${HOST} → [${RESOLVED}] — прокси Cloudflare, сервер за ним (${MY_IP})"
+    echo "   В Cloudflare: SSL/TLS → режим «Full (strict)», иначе будет цикл редиректов или ошибка 52x."
+    echo "   Сертификат Caddy получит сам через HTTP-01 (Cloudflare пропускает /.well-known/acme-challenge/)."
+    echo "   Проверить, что A-запись за прокси ведёт сюда: в Cloudflare DNS у ${HOST} должен стоять ${MY_IP}."
 else
     red "✖ DNS: ${HOST} → [${RESOLVED:-нет A-записи}], а сервер — ${MY_IP}"
     echo "   Добавьте A-запись ${HOST} → ${MY_IP} у регистратора и подождите обновления DNS."

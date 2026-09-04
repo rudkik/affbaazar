@@ -16,6 +16,7 @@
 
 ```bash
 # 0. DNS: A-запись affbazaar.com (и www.affbazaar.com) → IP сервера. Без этого Caddy не выпустит сертификат.
+#    Домен за прокси Cloudflare («оранжевое облако») — тоже нормально, см. раздел «Cloudflare» ниже.
 
 sudo apt update && sudo apt install -y git make curl
 git clone <ваш-репозиторий> /opt/affbazaar && cd /opt/affbazaar
@@ -68,6 +69,25 @@ Caddy сам ставит `X-Forwarded-For` и `X-Forwarded-Proto`, бот им 
 переключится на этот режим: правит `/etc/caddy/Caddyfile`, проксирует на `127.0.0.1:8081`
 и делает `systemctl reload caddy`. Контейнер ищется по слову `caddy` в имени образа или
 контейнера; если он назван иначе — `CADDY_CONTAINER=имя` в `.env`.
+
+## Cloudflare
+
+Если домен проксирован через Cloudflare («оранжевое облако»), `dig affbazaar.com` отдаёт IP
+Cloudflare (`104.21.x.x`, `172.67.x.x`), а не сервера. `make caddy` это распознаёт и пропускает
+проверку DNS с предупреждением. Чтобы всё работало:
+
+1. В Cloudflare DNS у `affbazaar.com` и `www` в поле IP должен стоять адрес сервера (он же в
+   выводе `make dns`). Прокси можно оставить включённым.
+2. SSL/TLS → Overview → режим **Full (strict)**. В режиме «Flexible» Cloudflare ходит на сервер по
+   http, Caddy отвечает редиректом на https — получается бесконечный цикл. В «Off» сайт не откроется.
+3. Порт 80 на сервере открыт (`make firewall`): Caddy получает сертификат Let's Encrypt по HTTP-01,
+   Cloudflare пропускает `/.well-known/acme-challenge/` без редиректа на https.
+
+`make health` снаружи видит сертификат Cloudflare, поэтому дополнительно проверяет сертификат
+Caddy напрямую на `127.0.0.1:443`. Если он не выпускается: `docker logs <caddy> | grep -i acme`
+или `journalctl -u caddy`, чаще всего дело в закрытом порту 80 или режиме SSL не «Full (strict)».
+
+Отключить прокси (серое облако) тоже можно, тогда всё работает как с обычным DNS.
 
 ## Повседневные команды
 

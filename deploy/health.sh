@@ -37,8 +37,22 @@ if out=$(curl -fsS --max-time 15 "https://${DOMAIN}/api/me" 2>&1); then
     code=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "http://${DOMAIN}/" 2>/dev/null || true)
     case "$code" in 301|308) green "✔ http → https редирект работает";; *) yellow "! http://${DOMAIN} ответил $code, ожидался 308";; esac
     if command -v openssl >/dev/null 2>&1; then
+        ISSUER=$(echo | openssl s_client -servername "$DOMAIN" -connect "${DOMAIN}:443" 2>/dev/null | openssl x509 -noout -issuer 2>/dev/null)
         EXP=$(echo | openssl s_client -servername "$DOMAIN" -connect "${DOMAIN}:443" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
-        [ -n "$EXP" ] && echo "  сертификат действует до: $EXP (Caddy продлевает сам)"
+        if echo "$ISSUER" | grep -qi cloudflare; then
+            echo "  снаружи домен отдаёт сертификат Cloudflare (прокси), проверяю сертификат Caddy напрямую…"
+            # Мимо прокси: резолвим домен в 127.0.0.1 — Caddy слушает 443 на этом сервере
+            if curl -fsS --max-time 10 --resolve "${DOMAIN}:443:127.0.0.1" -o /dev/null "https://${DOMAIN}/api/me" 2>/dev/null; then
+                OEXP=$(echo | openssl s_client -servername "$DOMAIN" -connect "127.0.0.1:443" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+                green "✔ сертификат Caddy на сервере валиден, действует до: ${OEXP:-?} (Caddy продлевает сам)"
+            else
+                yellow "! Caddy на 127.0.0.1:443 не отдаёт валидный сертификат для ${DOMAIN}"
+                echo "   Если make caddy только что выполнен — подождите 30–60 с. Иначе в Cloudflare поставьте SSL/TLS «Full (strict)»"
+                echo "   и проверьте, что запрос http://${DOMAIN}/.well-known/acme-challenge/ доходит до Caddy (порт 80 открыт: make firewall)."
+            fi
+        else
+            [ -n "$EXP" ] && echo "  сертификат действует до: $EXP (Caddy продлевает сам)"
+        fi
     fi
 else
     red "✖ https://${DOMAIN} не отвечает: $out"
