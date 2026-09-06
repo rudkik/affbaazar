@@ -100,8 +100,9 @@ async def main():
         print("статика и favicon отдаются OK")
 
         html = (await c.get("/")).text
-        for tag in ('href="/favicon.ico"', 'href="/static/favicon-32x32.png"',
-                    'href="/static/apple-touch-icon.png"', 'href="/static/site.webmanifest"'):
+        # ?v=N — cache-buster: браузеры кешируют favicon очень надолго (в т.ч. старый 404)
+        for tag in ('href="/favicon.ico?v=', 'href="/static/favicon-32x32.png?v=',
+                    'href="/static/apple-touch-icon.png?v=', 'href="/static/site.webmanifest?v='):
             assert tag in html, tag
         assert "/branding/logo.png?v=" in html, "логотип с cache-buster'ом"
         print("теги favicon и логотип в шапке OK")
