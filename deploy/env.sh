@@ -43,6 +43,13 @@ WEBAPP_URL=https://${DOMAIN}
 # Пусто = Telegram Stars (XTR). Для фиата — provider_token из @BotFather.
 PAYMENT_PROVIDER_TOKEN=
 
+# --- Оплата криптой (USDT/USDC через CryptoPay, см. INTEGRATION.md) ---
+# Пусто = кнопки «Оплатить криптой» в боте нет. Ключ и секрет — из карточки сервиса в админке процессинга.
+# В карточку сервиса впишите вебхук: https://${DOMAIN}/webhooks/cryptopay
+CRYPTOPAY_API_KEY=
+CRYPTOPAY_WEBHOOK_SECRET=
+CRYPTOPAY_BASE_URL=https://ubaduba.top
+
 # --- Хранилище (в Docker переопределяется на /app/data) ---
 DATA_DIR=
 ENVEOF

@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import html
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,7 +12,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import auth, db, site_db
+from app import auth, cryptopay, db, site_db
 from app.config import ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
 
 # На боевом домене (https) куки отдаём только по защищённому соединению.
@@ -555,6 +556,59 @@ async def admin_payments(limit: int = 50, _: bool = Depends(require_admin)):
         """SELECT p.*, u.username FROM payments p LEFT JOIN users u ON u.user_id = p.user_id
            ORDER BY p.id DESC LIMIT ?""", (min(limit, 200),))
     return [dict(r) for r in rows]
+
+
+# ------------------------------------------------------------------ вебхук CryptoPay
+@app.post("/webhooks/cryptopay")
+async def cryptopay_webhook(request: Request):
+    """Приём событий процессинга (INTEGRATION.md §4). Подпись — по сырому телу, до парсинга.
+
+    Вне сессионной авторизации и CSRF: аутентификация здесь — только HMAC-подпись.
+    Отвечаем 2xx сразу после записи в базу; уведомления в Telegram не влияют на ответ.
+    """
+    raw = await request.body()
+    ok = cryptopay.verify(request.headers.get("X-CryptoPay-Timestamp", ""), raw,
+                          request.headers.get("X-CryptoPay-Signature", ""))
+    if not ok:
+        log.warning("cryptopay: вебхук с неверной подписью (delivery=%s)",
+                    request.headers.get("X-CryptoPay-Delivery"))
+        raise HTTPException(status_code=401, detail="bad signature")
+    try:
+        event = json.loads(raw)
+        assert isinstance(event, dict)
+    except (ValueError, AssertionError):
+        raise HTTPException(status_code=400, detail="bad json")
+    result = await cryptopay.apply_event(event)
+    log.info("cryptopay: вебхук %s → %s", event.get("event"), result.get("action"))
+    await _cryptopay_notify(result, event)
+    return {"ok": True, "action": result.get("action")}
+
+
+async def _cryptopay_notify(result: dict, event: dict) -> None:
+    """Сообщить пользователю (и админам о зачислении). Ошибки Telegram не мешают ответить 200."""
+    text = cryptopay.describe(result)
+    topup = result.get("topup")
+    if not BOT or not text or not topup:
+        return
+    try:
+        await BOT.send_message(int(topup["user_id"]), text)
+    except Exception:  # noqa: BLE001
+        log.exception("cryptopay: не удалось уведомить пользователя %s", topup["user_id"])
+    if result.get("action") not in ("credited", "reversed"):
+        return
+    invoice = (event.get("data") or {}).get("invoice") or {}
+    user = await db.get_user(int(topup["user_id"]))
+    who = f"@{user['username']}" if user and user["username"] else str(topup["user_id"])
+    if result["action"] == "credited":
+        note = (f"🪙 Оплата криптой: {who} — {topup['amount_credited']} "
+                f"{html.escape(str(invoice.get('currency') or 'USD'))} → {result['tokens']} коинов.")
+    else:
+        note = f"⚠️ Реверс крипто-платежа: {who} — списано {result['tokens']} коинов (счёт {invoice.get('id')})."
+    for admin_id in ADMINS:
+        try:
+            await BOT.send_message(admin_id, note)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @app.get("/admin/api/transactions")

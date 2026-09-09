@@ -6,6 +6,7 @@ from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, ReplyKeyboardMarkup)
 
 from app import db, subscription
+from app.config import cryptopay_enabled
 
 
 async def subscribe_kb(missing: list, bot_username: str) -> InlineKeyboardMarkup:
@@ -85,9 +86,31 @@ async def packages_kb() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=f"{p['tokens']} коинов — {p['stars']} ⭐",
                                   callback_data=f"buy:{i}")]
             for i, p in enumerate(packages)]
-    return InlineKeyboardMarkup(inline_keyboard=rows or
-                                [[InlineKeyboardButton(text="Пакеты не настроены",
-                                                       callback_data="noop")]])
+    if not rows:
+        rows = [[InlineKeyboardButton(text="Пакеты не настроены", callback_data="noop")]]
+    if cryptopay_enabled():
+        rows.append([InlineKeyboardButton(text="🪙 Оплатить криптой (USDT/USDC)",
+                                          callback_data="crypto")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def crypto_packages_kb(packages: list[dict]) -> InlineKeyboardMarkup:
+    """Пакеты за USDT/USDC (CryptoPay)."""
+    rows = [[InlineKeyboardButton(text=f"{p['tokens']} коинов — {p['usd']} USDT/USDC",
+                                  callback_data=f"cbuy:{i}")]
+            for i, p in enumerate(packages)]
+    if not rows:
+        rows = [[InlineKeyboardButton(text="Пакеты не настроены", callback_data="noop")]]
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def crypto_invoice_kb(topup) -> InlineKeyboardMarkup:
+    """Кнопки под выставленным крипто-счётом: оплатить и проверить оплату."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить", url=topup["payment_url"])],
+        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"cstatus:{topup['id']}")],
+    ])
 
 
 async def chats_kb(prefix: str = "chat") -> InlineKeyboardMarkup:

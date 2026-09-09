@@ -26,6 +26,16 @@ SECRET_KEY = os.getenv("SECRET_KEY", "insecure-dev-secret")
 PUBLIC_URL = os.getenv("PUBLIC_URL", f"http://localhost:{WEB_PORT}").rstrip("/")
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "").strip()
 
+# CryptoPay (USDT/USDC): ключ и секрет вебхука выдаёт админка процессинга, см. INTEGRATION.md.
+CRYPTOPAY_API_KEY = os.getenv("CRYPTOPAY_API_KEY", "").strip()
+CRYPTOPAY_WEBHOOK_SECRET = os.getenv("CRYPTOPAY_WEBHOOK_SECRET", "").strip()
+CRYPTOPAY_BASE_URL = (os.getenv("CRYPTOPAY_BASE_URL") or "https://ubaduba.top").strip().rstrip("/")
+
+
+def cryptopay_enabled() -> bool:
+    """Кнопка «оплатить криптой» показывается, только когда задан API-ключ."""
+    return bool(CRYPTOPAY_API_KEY)
+
 # Адрес сайта для Telegram Mini App. Telegram принимает только HTTPS,
 # поэтому на localhost кнопка-приложение не появится — это нормально.
 WEBAPP_URL = (os.getenv("WEBAPP_URL") or PUBLIC_URL).rstrip("/")

@@ -304,6 +304,7 @@ SETTING_TITLES = {
     "referral_bonus": "Токенов за приглашённого друга",
     "message_cost": "Стоимость одного сообщения",
     "token_packages": "Пакеты токенов (JSON)",
+    "crypto_packages": "Пакеты за крипту USDT/USDC (JSON)",
     "welcome_message": "Глобальное приветствие",
     "no_tokens_text": "Текст при нехватке коинов",
     "bot_only_text": "Текст в режиме «только через бота»",
@@ -356,14 +357,15 @@ async def setting_input(message: Message, state: FSMContext) -> None:
             await message.answer("⚠️ Нужно число. Попробуйте ещё раз.")
             return
         value = str(max(0, int(value)))
-    if key == "token_packages":
+    if key in ("token_packages", "crypto_packages"):
         try:
             parsed = json.loads(message.text)
             assert isinstance(parsed, list)
             value = json.dumps(parsed, ensure_ascii=False)
         except Exception:  # noqa: BLE001
-            await message.answer('⚠️ Нужен JSON вида '
-                                 '<code>[{"stars": 50, "tokens": 50}]</code>')
+            example = ('[{"stars": 50, "tokens": 50}]' if key == "token_packages"
+                       else '[{"usd": "5", "tokens": 50}]')
+            await message.answer(f'⚠️ Нужен JSON вида <code>{example}</code>')
             return
     await db.set_setting(key, value)
     await state.clear()

@@ -133,6 +133,32 @@ CREATE TABLE IF NOT EXISTS payments (
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
+-- Пополнения через CryptoPay (USDT/USDC). Одна строка = один счёт в процессинге.
+CREATE TABLE IF NOT EXISTS crypto_topups (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,  -- он же external_id счёта: topup-<id>
+    user_id         INTEGER NOT NULL,
+    invoice_id      TEXT,                               -- id счёта в CryptoPay
+    amount          TEXT NOT NULL,                      -- запрошено, USD строкой ("5.00")
+    tokens          INTEGER NOT NULL,                   -- сколько коинов за полную оплату
+    amount_credited TEXT DEFAULT '0',                   -- сколько USD реально зачтено
+    tokens_credited INTEGER DEFAULT 0,                  -- сколько коинов начислено
+    status          TEXT DEFAULT 'pending',             -- pending | confirming | paid | partial | reversed | expired | cancelled
+    payment_url     TEXT,
+    expires_at      TEXT,
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_topup_user ON crypto_topups(user_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_topup_invoice ON crypto_topups(invoice_id);
+
+-- Обработанные доставки вебхуков CryptoPay: защита от повторов.
+CREATE TABLE IF NOT EXISTS cryptopay_deliveries (
+    delivery_id TEXT PRIMARY KEY,
+    event       TEXT,
+    invoice_id  TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS ad_types (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL UNIQUE,
@@ -232,6 +258,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
                                     {"stars": 100, "tokens": 120},
                                     {"stars": 250, "tokens": 350}], ensure_ascii=False),
     "sub_cache_ttl":    "0",      # 0 = проверять подписку всегда (требование п.1)
+    # Пакеты за криптовалюту (USDT/USDC через CryptoPay): цена в USD строкой и коины.
+    "crypto_packages":  json.dumps([{"usd": "5", "tokens": 50},
+                                    {"usd": "10", "tokens": 120},
+                                    {"usd": "25", "tokens": 350}], ensure_ascii=False),
 
     # --- канал объявлений и цены (в коинах) ---
     "ad_channel_id":    "0",      # канал, куда бот публикует объявления

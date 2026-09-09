@@ -459,7 +459,8 @@ const SETTING_GROUPS = [
     message_cost:'Стоимость одного сообщения',
     no_tokens_text:'Текст при нехватке коинов',
     bot_only_text:'Текст в режиме «только через бота»',
-    token_packages:'Пакеты коинов (JSON)',
+    token_packages:'Пакеты коинов за Stars (JSON)',
+    crypto_packages:'Пакеты коинов за крипту USDT/USDC (JSON: usd, tokens)',
     sub_cache_ttl:'Кэш проверки подписки (сек., 0 = всегда проверять)',
   }},
   {title:'Сайт — название и логотип', keys:{
@@ -481,7 +482,7 @@ const SETTING_GROUPS = [
   }},
 ];
 const LONG_KEYS = ['restricted_text','welcome_message','no_tokens_text','bot_only_text',
-                   'token_packages','rules_text'];
+                   'token_packages','crypto_packages','rules_text'];
 
 async function loadSettings(){
   const s = await api('/admin/api/settings');

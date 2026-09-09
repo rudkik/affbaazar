@@ -26,6 +26,13 @@ if [ -n "$TOKEN" ] && ! echo "$TOKEN" | grep -qE '^[0-9]+:[A-Za-z0-9_-]{30,}$'; 
     red "  ✖ BOT_TOKEN не похож на токен Telegram (формат 123456:AA…)"; errors=1
 fi
 
+# CryptoPay: ключ без секрета вебхука — коины не начислятся автоматически
+if [ -n "$(env_get CRYPTOPAY_API_KEY)" ] && [ -z "$(env_get CRYPTOPAY_WEBHOOK_SECRET)" ]; then
+    yellow "  ! CRYPTOPAY_API_KEY задан, а CRYPTOPAY_WEBHOOK_SECRET пуст — вебхуки будут отклоняться (401)."
+    CP_URL=$(env_get CRYPTOPAY_BASE_URL)
+    echo   "    Возьмите Webhook secret в карточке сервиса на ${CP_URL:-https://ubaduba.top}"
+fi
+
 PUBLIC_URL=$(env_get PUBLIC_URL)
 case "$PUBLIC_URL" in
     https://*) ;;
