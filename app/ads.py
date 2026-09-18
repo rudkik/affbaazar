@@ -4,14 +4,14 @@
 """
 import html
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app import action_log, db, site_db, subscription, tokens
+from app import action_log, db, locks, site_db, subscription, texts, tokens
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +20,10 @@ PIN_OPTIONS = (0, 4, 8)          # часы закрепа
 
 class AdError(Exception):
     """Публикация невозможна (нет канала, нет прав, не хватает коинов)."""
+
+
+class PinBusyError(AdError):
+    """Закреп уже куплен другим объявлением. Текст ошибки — готовое сообщение (HTML)."""
 
 
 # ------------------------------------------------------------------ цена
@@ -43,6 +47,49 @@ async def price_line(has_image: bool = False, pin_hours: int = 0) -> str:
     if q["pin"]:
         parts.append(f"закреп {pin_hours} ч — {q['pin']}")
     return " + ".join(parts) + f" = <b>{q['total']}</b> коинов"
+
+
+# ------------------------------------------------------------------ закреп: один на канал
+MSK = timezone(timedelta(hours=3))
+
+
+async def active_pin(exclude_ad_id: Optional[int] = None):
+    """Действующий оплаченный закреп в канале (строка ads) или None.
+
+    Закреп в канале один: пока чужой не истёк, новый продавать нельзя — иначе он
+    вытеснит уже оплаченный (AffBazaar-16).
+    """
+    return await db.fetchone(
+        """SELECT * FROM ads WHERE pinned_until IS NOT NULL AND unpinned = 0
+           AND status = 'published' AND pinned_until > ? AND id <> ?
+           ORDER BY pinned_until DESC LIMIT 1""",
+        (db.iso(db.utcnow()), exclude_ad_id or 0))
+
+
+def pin_until_text(until: datetime) -> str:
+    """Точное время окончания закрепа. Часовой пояс пользователя Telegram боту не отдаёт,
+    поэтому показываем МСК и UTC — а рядом ещё и «через сколько» (см. pin_left_text)."""
+    until = until.astimezone(timezone.utc)
+    return f"{until.astimezone(MSK):%d.%m в %H:%M} МСК ({until:%H:%M} UTC)"
+
+
+def pin_left_text(until: datetime, now: Optional[datetime] = None) -> str:
+    seconds = max(0, int((until - (now or db.utcnow())).total_seconds()))
+    minutes = max(1, (seconds + 59) // 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours and minutes:
+        return f"{hours} ч {minutes} мин"
+    return f"{hours} ч" if hours else f"{minutes} мин"
+
+
+async def pin_busy_text(user=None) -> Optional[str]:
+    """Сообщение «закреп занят до …» или None, если закреп свободен."""
+    row = await active_pin()
+    until = db.parse_iso(row["pinned_until"]) if row else None
+    if until is None:
+        return None
+    return await texts.t("txt_ad_pin_busy", user, until=pin_until_text(until),
+                         left=pin_left_text(until))
 
 
 # ------------------------------------------------------------------ текст поста
@@ -114,6 +161,25 @@ async def publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=Non
 
     Возвращает {"ad_id", "message_id", "cost", "balance"}. Кидает AdError.
     """
+    if not pin_hours:
+        return await _publish_ad(bot, user, text=text, ad_type_row=ad_type_row,
+                                 vertical_row=vertical_row, media_type=media_type,
+                                 media_file_id=media_file_id, pin_hours=0, socials=socials)
+    # Закреп один на канал: проверка «свободен ли» и сама публикация идут под одной
+    # блокировкой, иначе два одновременных покупателя оба увидят «свободно».
+    async with locks.named("ad_pin"):
+        busy = await pin_busy_text(user)
+        if busy:
+            raise PinBusyError(busy)
+        return await _publish_ad(bot, user, text=text, ad_type_row=ad_type_row,
+                                 vertical_row=vertical_row, media_type=media_type,
+                                 media_file_id=media_file_id, pin_hours=pin_hours,
+                                 socials=socials)
+
+
+async def _publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=None,
+                      media_type: str = "text", media_file_id: Optional[str] = None,
+                      pin_hours: int = 0, socials: Optional[str] = None) -> dict[str, Any]:
     channel_id, channel_title = await ad_channel(bot)
     has_image = bool(media_file_id) and media_type != "text"
     quote = await price_quote(has_image, pin_hours)
@@ -257,11 +323,11 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
         await site_db.mark_deleted(ad["channel_id"], ad["channel_message_id"])
 
     if bot and kind != "author":
-        note = (f"🗑 Ваше объявление удалено администрацией.\n\n"
-                f"<b>Комментарий:</b> {html.escape(comment)}" if comment else
-                "🗑 Ваше объявление удалено администрацией.")
-        if refunded:
-            note += f"\n\nНа баланс возвращено <b>{refunded}</b> коинов."
+        comment_block = (await texts.t("txt_ad_deleted_comment", text=html.escape(comment))
+                         if comment else "")
+        refund_block = (await texts.t("txt_ad_deleted_refund", tokens=refunded)
+                        if refunded else "")
+        note = await texts.t("txt_ad_deleted", comment=comment_block, refund=refund_block)
         try:
             await bot.send_message(ad["user_id"], note)
         except TelegramAPIError:

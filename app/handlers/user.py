@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
                            Message)
 
-from app import action_log, db, keyboards, services, subscription, tokens
+from app import action_log, db, keyboards, services, subscription, texts, tokens
 from app.config import ADMINS, PUBLIC_URL
 
 log = logging.getLogger(__name__)
@@ -82,21 +82,23 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
                 await db.execute("UPDATE users SET referrer_id = ? WHERE user_id = ?",
                                  (referrer_id, user.id))
 
+    # Уже подписан на канал, а коинов за подписку ещё не получал — начисляем при запуске
+    # и благодарим (AffBazaar-15). Делаем это до приветствия, чтобы баланс в нём был верным.
+    from app.handlers.chat_guard import activate_if_subscribed
+    try:
+        await activate_if_subscribed(bot, user)
+    except Exception:  # noqa: BLE001 — /start обязан ответить при любой ошибке проверки
+        log.exception("Проверка подписки при /start не удалась для %s", user.id)
+
     is_admin = user.id in ADMINS
     kb = keyboards.admin_menu() if is_admin else await keyboards.main_menu()
-    balance = await tokens.balance(user.id)
-    signup_bonus = await db.get_int("signup_bonus")
-
     chats = await db.active_chats()
     chat_lines = "\n".join(f"• {html.escape(c['title'] or str(c['chat_id']))}" for c in chats) or "—"
 
     await message.answer(
-        f"Привет, {services.user_mention(user)}! Это <b>Aff Bazar</b> — биржа объявлений "
-        f"affiliate-рынка.\n\n"
-        f"Баланс: <b>{balance}</b> коинов.\n"
-        f"За подписку на обязательные каналы начисляется <b>{signup_bonus}</b> коинов "
-        f"(единоразово). Токенами оплачиваются сообщения в чате.\n\n"
-        f"Подключённые чаты:\n{chat_lines}",
+        await texts.t("txt_start", user, balance=await tokens.balance(user.id),
+                      bonus=await db.get_int("signup_bonus"),
+                      price=await db.get_int("price_post"), chats=chat_lines),
         reply_markup=kb,
     )
     if command and command.args == "topup":
@@ -106,9 +108,8 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
 @router.message(F.text == "💰 Баланс")
 async def show_balance(message: Message) -> None:
     balance = await tokens.balance(message.from_user.id)
-    cost = await db.get_int("message_cost")
-    await message.answer(f"💰 Баланс: <b>{balance}</b> коинов.\n"
-                         f"Стоимость одного сообщения: {cost}.")
+    await message.answer(await texts.t("txt_balance", message.from_user, balance=balance,
+                                       price=await db.get_int("price_post")))
 
 
 @router.message(F.text == "📊 Мой профиль")
@@ -123,16 +124,12 @@ async def show_profile(message: Message) -> None:
     earned = await db.scalar(
         "SELECT COALESCE(SUM(amount),0) FROM token_tx WHERE user_id = ? AND amount > 0", (uid,))
     violations = await db.user_violations(uid)
-    await message.answer(
-        f"📊 <b>Профиль</b>\n"
-        f"ID: <code>{uid}</code>\n"
-        f"Баланс: <b>{row['tokens'] if row else 0}</b>\n"
-        f"Сообщений отправлено: {row['messages_sent'] if row else 0}\n"
-        f"Всего начислено: {earned} / потрачено: {spent}\n"
-        f"Приглашено: {invited} (активировались: {activated_invited})\n"
-        f"Удалено объявлений: {violations['deleted_total']} "
-        f"(нарушений: {violations['deleted_by_moderator']})\n"
-        f"Активация: {'да' if row and row['activated'] else 'нет'}")
+    await message.answer(await texts.t(
+        "txt_profile", message.from_user, id=uid, balance=row["tokens"] if row else 0,
+        sent=row["messages_sent"] if row else 0, earned=earned, spent=spent,
+        invited_active=activated_invited, invited=invited,
+        deleted=violations["deleted_total"], violations=violations["deleted_by_moderator"],
+        activated="да" if row and row["activated"] else "нет"))
 
 
 @router.message(F.text.startswith(keyboards.BTN_REFERRAL))
@@ -144,18 +141,19 @@ async def show_referral(message: Message, bot: Bot) -> None:
     invited = await db.scalar("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (uid,))
     activated_invited = await db.scalar(
         "SELECT COUNT(*) FROM users WHERE referrer_id = ? AND activated = 1", (uid,))
-    await message.answer(
-        f"👥 Твоя реферальная ссылка:\n<code>{link}</code>\n\n"
-        f"За каждого друга, который перейдёт по ней, подпишется на каналы и активируется, "
-        f"ты получишь <b>{bonus}</b> коинов.\n\n"
-        f"Вы пригласили: {invited} участников\n"
-        f"Из них активировались: {activated_invited}")
+    await message.answer(await texts.t("txt_referral", message.from_user, link=link, bonus=bonus,
+                                       invited_active=activated_invited, invited=invited))
 
 
 @router.message(F.text.in_({"💎 Купить коины", "💎 Купить токены"}))
 async def show_packages(message: Message) -> None:
-    kb = await keyboards.packages_kb()
-    await message.answer("💎 Выбери пакет коинов:", reply_markup=kb)
+    # Коины продаются только за крипту (Stars убраны, AffBazaar-13): сразу список пакетов.
+    from app.config import cryptopay_enabled
+    if not cryptopay_enabled():
+        await message.answer(await texts.t("txt_buy_disabled", message.from_user))
+        return
+    await message.answer(await texts.t("txt_buy_menu", message.from_user),
+                         reply_markup=await keyboards.packages_kb())
 
 
 @router.message(Command("balance"))
@@ -176,7 +174,7 @@ async def cmd_ref(message: Message, bot: Bot) -> None:
 @router.message(Command("site"))
 @router.message(F.text == keyboards.BTN_SITE)
 async def cmd_site(message: Message) -> None:
-    await message.answer(f"🌐 Лента объявлений Aff Bazar: {PUBLIC_URL}/",
+    await message.answer(await texts.t("txt_site", message.from_user, url=f"{PUBLIC_URL}/"),
                          reply_markup=keyboards.links_kb(None, f"{PUBLIC_URL}/"))
 
 
@@ -184,10 +182,11 @@ async def cmd_site(message: Message) -> None:
 async def btn_channel(message: Message, bot: Bot) -> None:
     link = await subscription.ad_channel_link(bot)
     if not link:
-        await message.answer("Канал пока не подключён — загляните позже.")
+        await message.answer(await texts.t("txt_channel_none", message.from_user))
         return
     title = await db.get_setting("ad_channel_title") or "Aff Bazaar"
-    await message.answer(f"📣 Канал объявлений <b>{html.escape(title)}</b>: {link}",
+    await message.answer(await texts.t("txt_channel", message.from_user,
+                                       title=html.escape(title), url=link),
                          reply_markup=keyboards.links_kb(link, f"{PUBLIC_URL}/"))
 
 
@@ -213,8 +212,7 @@ async def post_via_bot(message: Message, bot: Bot, state: FSMContext) -> None:
 
     chats = await bot_only_chats()
     if not chats:
-        await message.answer("Сейчас публикация через бота не включена ни для одного чата. "
-                             "Пиши прямо в чат — бот проверит подписку.")
+        await message.answer(await texts.t("txt_post_no_chats", message.from_user))
         return
     if len(chats) == 1:
         await publish(bot, message, chats[0])
@@ -277,7 +275,7 @@ async def publish(bot: Bot, message: Message, chat, source_message_id: Optional[
     from app.handlers.chat_guard import activate_if_needed
     await activate_if_needed(bot, user)
 
-    cost = await db.get_int("message_cost")
+    cost = await db.get_int("price_post")     # цена одна: объявление = сообщение в чат
     if cost > 0 and await tokens.balance(user.id) < cost:
         me = await bot.get_me()
         await message.answer(await services.render(await db.get_setting("no_tokens_text"), user),
@@ -290,8 +288,8 @@ async def publish(bot: Bot, message: Message, chat, source_message_id: Optional[
 
     posted = await deliver(bot, chat, user, message, src_msg_id, cost)
     if posted:
-        await message.answer(f"✅ Опубликовано. Списано {cost} коин(ов). "
-                             f"Баланс: {await tokens.balance(user.id)}.")
+        await message.answer(await texts.t("txt_post_published", user, cost=cost,
+                                           balance=await tokens.balance(user.id)))
 
 
 async def deliver(bot: Bot, chat, user, message: Message, src_msg_id: int, cost: int) -> bool:
@@ -309,7 +307,7 @@ async def deliver(bot: Bot, chat, user, message: Message, src_msg_id: int, cost:
                 caption=f"{header}" + (f":\n\n{html.escape(body)}" if body else ""))
     except TelegramAPIError as exc:
         log.warning("Публикация в чат %s не удалась: %s", chat_id, exc)
-        await message.answer("⚠️ Не удалось опубликовать сообщение. Попробуй позже.")
+        await message.answer(await texts.t("txt_post_failed", user))
         return False
 
     if cost > 0:

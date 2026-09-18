@@ -58,7 +58,7 @@ async def main():
     await db.upsert_chat(CHAT_ID, "Чат")
     await db.execute("UPDATE chats SET post_mode='bot_only' WHERE chat_id=?", (CHAT_ID,))
     await db.set_required_channels(CHAT_ID, [{"channel_id": CHANNEL_ID, "title": "К", "username": "ch"}])
-    await db.set_setting("message_cost", 5)
+    await db.set_setting("price_post", 5)
     bot = FakeBot()
 
     await db.upsert_user(A, "alice", "Alice")

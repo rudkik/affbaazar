@@ -59,7 +59,7 @@ async def main():
                                               "username": "testchannel"}])
     await db.set_setting("check_limit", 3)
     await db.set_setting("msg_ttl", 0)          # без фоновых таймеров в тесте
-    await db.set_setting("message_cost", 10)
+    await db.set_setting("price_post", 10)
 
     dp = Dispatcher(storage=MemoryStorage())
     for r in (admin.router, payments.router, user_h.router, chat_guard.router):

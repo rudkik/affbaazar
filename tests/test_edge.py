@@ -254,14 +254,14 @@ async def main():
     S.unpin_fails = False
 
     print("\n--- настройки с мусором ---")
-    await db.set_setting("token_packages", "не json")
+    await db.set_setting("crypto_packages", "не json")
     try:
         kb = await __import__("app.keyboards", fromlist=["x"]).packages_kb()
         check("битый JSON пакетов не роняет клавиатуру", kb is not None)
     except Exception as exc:
         check("битый JSON пакетов не роняет клавиатуру", False, repr(exc))
-    await db.set_setting("token_packages",
-                         json.dumps([{"stars": 50, "tokens": 50}], ensure_ascii=False))
+    await db.set_setting("crypto_packages",
+                         json.dumps([{"usd": "5", "tokens": 50}], ensure_ascii=False))
 
     await db.set_setting("price_post", -100)
     q = await ads.price_quote()

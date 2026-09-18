@@ -19,7 +19,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
                            Message)
 
-from app import ads, db, keyboards, locks, subscription, text_rules, tokens
+from app import ads, db, keyboards, locks, subscription, text_rules, texts, tokens
 
 log = logging.getLogger(__name__)
 router = Router(name="post")
@@ -32,12 +32,6 @@ CANCEL_BTN = InlineKeyboardButton(text="❌ Отмена", callback_data="ads_ca
 # Пометка рубрики «Интро/Знакомства» (ad_types.note). Тег рубрики админ может
 # переименовать, поэтому смотрим и на note, и на tag.
 INTRO_MARK = "intro"
-
-SOCIALS_PROMPT = (
-    "Добавь ссылки на свои соцсети (каждая с новой строки) или нажми «Пропустить».\n\n"
-    "<b>Нельзя указывать корпоративный сайт или канал! Только личные соц. сети "
-    "или авторский блог! Такие объявления будут удалены.</b>")
-
 
 def is_intro_type(row) -> bool:
     """Рубрика «Интро/Знакомства» — у неё спрашиваем соцсети."""
@@ -114,6 +108,9 @@ async def _step_rules(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
 async def _step_subscription(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
     missing = await subscription.missing_for_ads(bot, user.id)
     if not missing:
+        # Подписан, но бонус за подписку ещё не получал — начисляем сейчас (AffBazaar-15).
+        from app.handlers.chat_guard import activate_if_subscribed
+        await activate_if_subscribed(bot, user)
         await _step_ad_type(chat_id, state, bot, user)
         return
     await state.set_state(Post.subscribe)
@@ -125,37 +122,34 @@ async def _step_subscription(chat_id: int, state: FSMContext, bot: Bot, user) ->
         if link:
             rows.append([InlineKeyboardButton(text=f"📢 {title}", url=link)])
     rows.append([InlineKeyboardButton(text="✅ Я подписался", callback_data="ads_sub_check")])
-    text = ("Чтобы публиковать объявления, подпишись на канал(ы):\n"
-            f"{subscription.channels_text(missing)}")
-    await bot.send_message(chat_id, text, reply_markup=_kb(rows))
+    await bot.send_message(chat_id, await texts.t("txt_ad_subscribe", user, missing),
+                           reply_markup=_kb(rows))
 
 
 async def _step_ad_type(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
     await state.set_state(Post.ad_type)
     types = await db.ad_types()
-    await bot.send_message(chat_id, "📢 Выбери рубрику объявления:", reply_markup=_cols(types, "adtype"))
+    await bot.send_message(chat_id, await texts.t("txt_ad_type", user),
+                           reply_markup=_cols(types, "adtype"))
 
 
 async def _step_vertical(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
     await state.set_state(Post.vertical)
     verts = await db.verticals()
-    await bot.send_message(chat_id, "🎯 Выбери вертикаль:", reply_markup=_cols(verts, "advert"))
+    await bot.send_message(chat_id, await texts.t("txt_ad_vertical", user),
+                           reply_markup=_cols(verts, "advert"))
 
 
 async def _step_text(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
     await state.set_state(Post.text)
-    await bot.send_message(
-        chat_id,
-        "✏️ Пришли текст объявления. Можно отправить сразу фото с подписью — "
-        f"текст возьмётся из подписи, а картинка добавится автоматически.\n"
-        f"Максимум {MAX_TEXT_LEN} символов.",
-        reply_markup=_kb([]))
+    await bot.send_message(chat_id, await texts.t("txt_ad_text", user, max=MAX_TEXT_LEN),
+                           reply_markup=_kb([]))
 
 
 async def _step_socials(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
     await state.set_state(Post.socials)
     kb = _kb([[InlineKeyboardButton(text="Пропустить", callback_data="ads_soc_skip")]])
-    await bot.send_message(chat_id, SOCIALS_PROMPT, reply_markup=kb)
+    await bot.send_message(chat_id, await texts.t("txt_ad_socials", user), reply_markup=kb)
 
 
 async def _after_text(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
@@ -179,11 +173,20 @@ async def _step_image(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
                               callback_data="ads_img_yes")],
         [InlineKeyboardButton(text="Без картинки", callback_data="ads_img_no")],
     ])
-    await bot.send_message(chat_id, "🖼 Добавить картинку к объявлению?", reply_markup=kb)
+    await bot.send_message(chat_id, await texts.t("txt_ad_image_ask", user, price=price_image),
+                           reply_markup=kb)
 
 
 async def _step_pin(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
     await state.set_state(Post.pin)
+    # Закреп в канале один. Пока он кем-то куплен, продавать его нельзя: показываем
+    # точное время, когда он освободится, и оставляем только публикацию без закрепа.
+    busy = await ads.pin_busy_text(user)
+    if busy:
+        kb = _kb([[InlineKeyboardButton(text="Опубликовать без закрепа",
+                                        callback_data="ads_pin:0")]])
+        await bot.send_message(chat_id, busy, reply_markup=kb)
+        return
     pin4 = await db.get_int("price_pin_4h")
     pin8 = await db.get_int("price_pin_8h")
     kb = _kb([
@@ -191,7 +194,7 @@ async def _step_pin(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
         [InlineKeyboardButton(text=f"📌 4 часа (+{pin4} коинов)", callback_data="ads_pin:4")],
         [InlineKeyboardButton(text=f"📌 8 часов (+{pin8} коинов)", callback_data="ads_pin:8")],
     ])
-    await bot.send_message(chat_id, "📌 Закрепить объявление в канале?", reply_markup=kb)
+    await bot.send_message(chat_id, await texts.t("txt_ad_pin_ask", user), reply_markup=kb)
 
 
 async def _step_confirm(chat_id: int, state: FSMContext, bot: Bot, user) -> None:
@@ -213,8 +216,8 @@ async def _step_confirm(chat_id: int, state: FSMContext, bot: Bot, user) -> None
         [InlineKeyboardButton(text="✅ Опубликовать", callback_data="ads_publish")],
         [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="ads_edit_text")],
     ])
-    await bot.send_message(chat_id, f"Стоимость: {price}\nБаланс: <b>{balance}</b> коинов.",
-                           reply_markup=kb)
+    await bot.send_message(chat_id, await texts.t("txt_ad_price", user, price=price,
+                                                   balance=balance), reply_markup=kb)
 
 
 # ------------------------------------------------------------------ отмена (любой шаг)
@@ -222,7 +225,7 @@ async def _step_confirm(chat_id: int, state: FSMContext, bot: Bot, user) -> None
 async def cb_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.answer()
-    await callback.message.answer("Отменено.")
+    await callback.message.answer(await texts.t("txt_ad_cancelled", callback.from_user))
 
 
 # ------------------------------------------------------------------ правила
@@ -239,8 +242,7 @@ async def cb_sub_check(callback: CallbackQuery, state: FSMContext, bot: Bot) -> 
     user = callback.from_user
     missing = await subscription.missing_for_ads(bot, user.id)
     if missing:
-        await callback.answer("Подписка не найдена. Проверь, что подписан на все каналы.",
-                              show_alert=True)
+        await callback.answer(await texts.t("txt_sub_not_found"), show_alert=True)
         return
     from app.handlers.chat_guard import activate_if_needed
     await activate_if_needed(bot, user)
@@ -297,12 +299,11 @@ async def on_text(message: Message, state: FSMContext, bot: Bot) -> None:
     body = (message.caption if is_photo else message.text) or ""
     body = body.strip()
     if not body:
-        await message.answer("Текст объявления не может быть пустым. Пришли текст"
-                             + (" в подписи к фото." if is_photo else "."))
+        await message.answer(await texts.t("txt_ad_text_empty", message.from_user))
         return
     if len(body) > MAX_TEXT_LEN:
-        await message.answer(f"Слишком длинный текст ({len(body)} символов из {MAX_TEXT_LEN}). "
-                             f"Сократи и пришли ещё раз.")
+        await message.answer(await texts.t("txt_ad_text_long", message.from_user,
+                                           len=len(body), max=MAX_TEXT_LEN))
         return
     # Ссылки и форматирование в тексте объявления запрещены (см. app/text_rules.py).
     # Текст может прийти подписью к фото — тогда и entities лежат в caption_entities.
@@ -322,7 +323,7 @@ async def on_text(message: Message, state: FSMContext, bot: Bot) -> None:
 
 @router.message(Post.text, _not_command)
 async def on_text_invalid(message: Message) -> None:
-    await message.answer("Пришли текст объявления сообщением, либо фото с подписью-текстом.")
+    await message.answer(await texts.t("txt_ad_text_invalid", message.from_user))
 
 
 # ------------------------------------------------------------------ соцсети («Интро»)
@@ -346,8 +347,7 @@ async def on_socials(message: Message, state: FSMContext, bot: Bot) -> None:
 
 @router.message(Post.socials, _not_command)
 async def on_socials_invalid(message: Message) -> None:
-    await message.answer("Пришли ссылки на соцсети текстом (каждую с новой строки) "
-                         "или нажми «Пропустить».")
+    await message.answer(await texts.t("txt_ad_socials_invalid", message.from_user))
 
 
 # ------------------------------------------------------------------ картинка
@@ -361,7 +361,8 @@ async def cb_image_no(callback: CallbackQuery, state: FSMContext, bot: Bot) -> N
 async def cb_image_yes(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     await state.set_state(Post.image)
     await callback.answer()
-    await bot.send_message(callback.message.chat.id, "Пришли картинку (фото).", reply_markup=_kb([]))
+    await bot.send_message(callback.message.chat.id,
+                           await texts.t("txt_ad_image", callback.from_user), reply_markup=_kb([]))
 
 
 @router.message(Post.image, F.photo)
@@ -372,15 +373,19 @@ async def on_image(message: Message, state: FSMContext, bot: Bot) -> None:
 
 @router.message(Post.image)
 async def on_image_invalid(message: Message) -> None:
-    await message.answer("Пришли картинку (фото).")
+    await message.answer(await texts.t("txt_ad_image", message.from_user))
 
 
 # ------------------------------------------------------------------ закреп
 @router.callback_query(Post.pin, F.data.startswith("ads_pin:"))
 async def cb_pin(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     hours = int(callback.data.split(":")[1])
-    await state.update_data(pin_hours=hours)
     await callback.answer()
+    if hours and await ads.active_pin():
+        # закреп купили, пока пользователь думал над кнопками — показываем шаг заново
+        await _step_pin(callback.message.chat.id, state, bot, callback.from_user)
+        return
+    await state.update_data(pin_hours=hours)
     await _step_confirm(callback.message.chat.id, state, bot, callback.from_user)
 
 
@@ -423,9 +428,8 @@ async def _do_publish(callback: CallbackQuery, state: FSMContext, bot: Bot, user
     if balance < quote["total"]:
         need = quote["total"] - balance
         await bot.send_message(
-            chat_id,
-            f"⚠️ Не хватает коинов: нужно <b>{quote['total']}</b>, на балансе <b>{balance}</b> "
-            f"(не хватает {need}). Пополни баланс:",
+            chat_id, await texts.t("txt_ad_no_coins", user, need=quote["total"],
+                                   balance=balance, lack=need),
             reply_markup=await keyboards.packages_kb())
         return
 
@@ -434,6 +438,13 @@ async def _do_publish(callback: CallbackQuery, state: FSMContext, bot: Bot, user
                                    vertical_row=vertical_row, media_type=media_type,
                                    media_file_id=media_file_id, pin_hours=pin_hours,
                                    socials=data.get("socials"))
+    except ads.PinBusyError as exc:
+        # Закреп успели купить между подтверждением и публикацией. Деньги не списаны:
+        # возвращаем на выбор закрепа (там теперь только «без закрепа»).
+        log.info("Закреп занят, объявление user=%s не опубликовано: %s", user.id, exc)
+        await state.update_data(pin_hours=0)
+        await _step_pin(chat_id, state, bot, user)
+        return
     except ads.AdError as exc:
         msg = html.escape(str(exc))
         if "коин" in str(exc).lower():
@@ -452,6 +463,5 @@ async def _do_publish(callback: CallbackQuery, state: FSMContext, bot: Bot, user
     except TelegramAPIError:
         pass
     await bot.send_message(
-        chat_id,
-        f"✅ Опубликовано!\nСписано: <b>{res['cost']}</b> коинов.\n"
-        f"Баланс: <b>{res['balance']}</b> коинов.{link_line}")
+        chat_id, await texts.t("txt_ad_published", user, cost=res["cost"],
+                               balance=res["balance"], link=link_line))

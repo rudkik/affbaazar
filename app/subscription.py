@@ -170,3 +170,32 @@ async def missing_for_ads(bot: Bot, user_id: int) -> list:
             log.warning("Проверка канала объявлений не удалась: %s", exc)
             return []
     return await missing_channels(bot, user_id, REQUIRED_GLOBAL)
+
+
+async def confirmed_for_ads(bot: Bot, user_id: int) -> bool:
+    """Строгая проверка для бонуса за подписку: True, только если Telegram подтвердил
+    подписку на ВСЕ нужные каналы (глобальный список, а если он пуст — канал объявлений).
+
+    В отличие от missing_for_ads, сбой проверки (бот не админ канала, канал недоступен)
+    здесь трактуется как «не подтверждено»: пускать писать при сбое можно, а вот начислять
+    коины без подтверждения — нет.
+    """
+    main_id = await db.get_int("ad_channel_id")
+    channel_ids = [int(ch["channel_id"]) for ch in await db.required_channels(REQUIRED_GLOBAL)]
+    if not channel_ids and main_id:
+        channel_ids = [main_id]
+    if not channel_ids:
+        return False
+    for channel_id in channel_ids:
+        try:
+            member = await bot.get_chat_member(channel_id, user_id)
+        except TelegramAPIError as exc:
+            log.warning("Бонус за подписку: канал %s не проверен для %s: %s",
+                        channel_id, user_id, exc)
+            return False
+        status = getattr(member.status, "value", member.status)
+        ok = status in SUBSCRIBED_STATUSES
+        await db.record_subscription(user_id, channel_id, ok, is_main=channel_id == main_id)
+        if not ok:
+            return False
+    return True

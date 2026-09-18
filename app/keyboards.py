@@ -1,5 +1,4 @@
 """Клавиатуры бота."""
-import json
 from typing import Optional
 
 from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
@@ -24,7 +23,7 @@ async def subscribe_kb(missing: list, bot_username: str) -> InlineKeyboardMarkup
 
 def topup_kb(bot_username: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💎 Пополнить токены",
+        InlineKeyboardButton(text="💎 Пополнить коины",
                              url=f"https://t.me/{bot_username}?start=topup")
     ]])
 
@@ -78,30 +77,19 @@ def admin_menu() -> ReplyKeyboardMarkup:
 
 
 async def packages_kb() -> InlineKeyboardMarkup:
-    raw = await db.get_setting("token_packages")
-    try:
-        packages = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        packages = []
-    rows = [[InlineKeyboardButton(text=f"{p['tokens']} коинов — {p['stars']} ⭐",
-                                  callback_data=f"buy:{i}")]
-            for i, p in enumerate(packages)]
-    if not rows:
-        rows = [[InlineKeyboardButton(text="Пакеты не настроены", callback_data="noop")]]
-    if cryptopay_enabled():
-        rows.append([InlineKeyboardButton(text="🪙 Оплатить криптой (USDT/USDC)",
-                                          callback_data="crypto")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    """Пакеты коинов. Продаются только за USDT/USDC через CryptoPay (Stars убраны)."""
+    from app import cryptopay  # локально: cryptopay тянет httpx и тексты
+    items = await cryptopay.packages() if cryptopay_enabled() else []
+    return crypto_packages_kb(items)
 
 
 def crypto_packages_kb(packages: list[dict]) -> InlineKeyboardMarkup:
-    """Пакеты за USDT/USDC (CryptoPay)."""
     rows = [[InlineKeyboardButton(text=f"{p['tokens']} коинов — {p['usd']} USDT/USDC",
                                   callback_data=f"cbuy:{i}")]
             for i, p in enumerate(packages)]
     if not rows:
-        rows = [[InlineKeyboardButton(text="Пакеты не настроены", callback_data="noop")]]
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_menu")])
+        rows = [[InlineKeyboardButton(text="Покупка коинов временно недоступна",
+                                      callback_data="noop")]]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -146,11 +134,10 @@ def settings_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📄 Текст для заблокированных", callback_data="gs:restricted_text")],
         [InlineKeyboardButton(text="🎁 Бонус за подписку", callback_data="gs:signup_bonus")],
         [InlineKeyboardButton(text="👥 Бонус за друга", callback_data="gs:referral_bonus")],
-        [InlineKeyboardButton(text="💸 Стоимость сообщения в чате", callback_data="gs:message_cost")],
         [InlineKeyboardButton(text="📢 Цена объявления", callback_data="gs:price_post")],
         [InlineKeyboardButton(text="🖼 Доплата за картинку", callback_data="gs:price_image")],
         [InlineKeyboardButton(text="📌 Закреп 4 часа", callback_data="gs:price_pin_4h")],
         [InlineKeyboardButton(text="📌 Закреп 8 часов", callback_data="gs:price_pin_8h")],
         [InlineKeyboardButton(text="📜 Текст правил", callback_data="gs:rules_text")],
-        [InlineKeyboardButton(text="💎 Пакеты токенов (JSON)", callback_data="gs:token_packages")],
+        [InlineKeyboardButton(text="🪙 Пакеты коинов за крипту (JSON)", callback_data="gs:crypto_packages")],
     ])

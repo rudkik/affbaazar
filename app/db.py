@@ -7,6 +7,7 @@ from typing import Any, Iterable, Optional
 
 import aiosqlite
 
+from app import texts
 from app.config import MAIN_DB
 
 log = logging.getLogger(__name__)
@@ -251,12 +252,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
                         "Чтобы иметь возможность писать в чат, необходимо подписаться на канал(ы) %CHANNEL_NAME%.",
     "signup_bonus":     "30",     # коинов за подписку (единоразово)
     "referral_bonus":   "10",     # коинов пригласившему, когда друг активировался
-    "message_cost":     "1",      # стоимость одного сообщения в чат
     "no_tokens_text":   "%USER%, закончились коины. Пополни баланс в боте, чтобы писать в чат.",
     "bot_only_text":    "%USER%, в этом чате писать можно только через бота. Открой бота и отправь сообщение туда.",
-    "token_packages":   json.dumps([{"stars": 50, "tokens": 50},
-                                    {"stars": 100, "tokens": 120},
-                                    {"stars": 250, "tokens": 350}], ensure_ascii=False),
     "sub_cache_ttl":    "0",      # 0 = проверять подписку всегда (требование п.1)
     # Пакеты за криптовалюту (USDT/USDC через CryptoPay): цена в USD строкой и коины.
     "crypto_packages":  json.dumps([{"usd": "5", "tokens": 50},
@@ -266,7 +263,9 @@ DEFAULT_SETTINGS: dict[str, str] = {
     # --- канал объявлений и цены (в коинах) ---
     "ad_channel_id":    "0",      # канал, куда бот публикует объявления
     "ad_channel_title": "",
-    "price_post":       "10",     # базовая цена объявления
+    # Единственная цена публикации: объявление в канал и сообщение в подключённый чат
+    # стоят одинаково (раньше была отдельная настройка message_cost — убрана, AffBazaar-14).
+    "price_post":       "10",     # цена объявления
     "price_image":      "5",      # доплата за картинку
     "price_pin_4h":     "15",     # доплата за закреп на 4 часа
     "price_pin_8h":     "25",     # доплата за закреп на 8 часов
@@ -279,6 +278,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "site_title":       "Aff Bazar",
     "site_tagline":     "Лента объявлений · биржа affiliate-рынка",
 }
+# Тексты бота (txt_*) — такие же настройки: правятся в админке сайта, см. app/texts.py.
+DEFAULT_SETTINGS.update(texts.defaults())
 
 
 # Рубрики (тип объявления). has_vertical = 1 -> у рубрики спрашивается вертикаль.

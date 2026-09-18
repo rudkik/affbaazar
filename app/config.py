@@ -24,7 +24,6 @@ WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 SECRET_KEY = os.getenv("SECRET_KEY", "insecure-dev-secret")
 PUBLIC_URL = os.getenv("PUBLIC_URL", f"http://localhost:{WEB_PORT}").rstrip("/")
-PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "").strip()
 
 # CryptoPay (USDT/USDC): ключ и секрет вебхука выдаёт админка процессинга, см. INTEGRATION.md.
 CRYPTOPAY_API_KEY = os.getenv("CRYPTOPAY_API_KEY", "").strip()

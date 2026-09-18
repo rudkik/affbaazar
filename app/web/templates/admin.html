@@ -452,14 +452,12 @@ const SETTING_GROUPS = [
     msg_ttl:'Время видимости сообщений бота (сек.)',
     check_limit:'Лимит последовательных проверок подписки',
     restrict_hours:'Время блокировки (часы)',
-    restricted_text:'Текст для заблокированного пользователя',
-    welcome_message:'Глобальное приветствие',
+    restricted_text:'Текст для заблокированного пользователя (%USER%, %HOURS%)',
+    welcome_message:'Глобальное приветствие (%USER%, %CHANNEL_NAME%)',
     signup_bonus:'Коинов за подписку',
     referral_bonus:'Коинов за приглашённого друга',
-    message_cost:'Стоимость одного сообщения',
-    no_tokens_text:'Текст при нехватке коинов',
-    bot_only_text:'Текст в режиме «только через бота»',
-    token_packages:'Пакеты коинов за Stars (JSON)',
+    no_tokens_text:'Текст при нехватке коинов (%USER%)',
+    bot_only_text:'Текст в режиме «только через бота» (%USER%)',
     crypto_packages:'Пакеты коинов за крипту USDT/USDC (JSON: usd, tokens)',
     sub_cache_ttl:'Кэш проверки подписки (сек., 0 = всегда проверять)',
   }},
@@ -470,7 +468,7 @@ const SETTING_GROUPS = [
   {title:'Объявления — канал и цены', keys:{
     ad_channel_id:'ID канала объявлений',
     ad_channel_title:'Название канала объявлений',
-    price_post:'Базовая цена объявления (коины)',
+    price_post:'Цена объявления (коины) — единственная цена публикации',
     price_image:'Доплата за картинку (коины)',
     price_pin_4h:'Доплата за закреп на 4 часа (коины)',
     price_pin_8h:'Доплата за закреп на 8 часов (коины)',
@@ -482,10 +480,37 @@ const SETTING_GROUPS = [
   }},
 ];
 const LONG_KEYS = ['restricted_text','welcome_message','no_tokens_text','bot_only_text',
-                   'token_packages','crypto_packages','rules_text'];
+                   'crypto_packages','rules_text','intro_note'];
+
+// Тексты бота: список приходит с сервера (app/texts.py), поэтому новый текст в боте
+// появляется здесь сам. В каждом работает шаблонизатор: %USER% и переменные из подсказки.
+let BOT_TEXTS = [];
+function textsBox(s){
+  const rows = BOT_TEXTS.map(t => {
+    const vars = t.vars.length ? 'Переменные: ' + t.vars.join(' · ') : 'Без переменных';
+    const note = t.plain ? ' Всплывающее окно: разметка (теги) не работает.' : '';
+    const lines = Math.min(8, Math.max(2, (s[t.key] ?? t.default).split('\n').length + 1));
+    return `<label class="f"><span>${esc(t.label)}</span>
+      <textarea id="s-${t.key}" rows="${lines}">${esc(s[t.key] ?? t.default)}</textarea>
+      <div class="muted" style="font-size:12px;margin-top:4px">${esc(vars + '.' + note)}
+        <a href="#" onclick="resetText('${t.key}');return false">Вернуть текст по умолчанию</a></div>
+    </label>`;
+  }).join('');
+  return `<div class="box" style="margin-bottom:14px">
+    <h2 class="sec">Тексты бота</h2>
+    <p class="muted" style="margin:0 0 12px">Все сообщения, которые бот пишет пользователю. Разметка —
+      как в Telegram: &lt;b&gt;жирный&lt;/b&gt;, &lt;i&gt;курсив&lt;/i&gt;, &lt;code&gt;код&lt;/code&gt;,
+      &lt;a href="…"&gt;ссылка&lt;/a&gt;. Переменные вида %USER% подставляются автоматически.</p>
+    ${rows}</div>`;
+}
+function resetText(key){
+  const t = BOT_TEXTS.find(x => x.key === key);
+  if (t) document.getElementById('s-' + key).value = t.default;
+}
 
 async function loadSettings(){
-  const s = await api('/admin/api/settings');
+  const [s, botTexts] = await Promise.all([api('/admin/api/settings'), api('/admin/api/texts')]);
+  BOT_TEXTS = Array.isArray(botTexts) ? botTexts : [];
   $('#settings-box').innerHTML = SETTING_GROUPS.map(g => `<div class="box" style="margin-bottom:14px">
     <h2 class="sec">${esc(g.title)}</h2>
     ${Object.entries(g.keys).map(([k,l]) => {
@@ -494,7 +519,8 @@ async function loadSettings(){
         : `<input id="s-${k}" value="${esc(s[k])}">`;
       return `<label class="f"><span>${esc(l)}</span>${field}</label>`;
     }).join('')}
-  </div>`).join('') + LOGO_BOX + '<button class="btn p" onclick="saveSettings()">Сохранить</button>';
+  </div>`).join('') + textsBox(s) + LOGO_BOX
+    + '<button class="btn p" onclick="saveSettings()">Сохранить</button>';
   refreshLogoPreview();
 }
 
@@ -542,7 +568,9 @@ async function saveSettings(){
   SETTING_GROUPS.forEach(g => Object.keys(g.keys).forEach(k => {
     payload[k] = document.getElementById('s-' + k).value;
   }));
-  await post('/admin/api/settings', payload);
+  BOT_TEXTS.forEach(t => { payload[t.key] = document.getElementById('s-' + t.key).value; });
+  const res = await post('/admin/api/settings', payload);
+  if (res.error) return alert(res.error);
   alert('Настройки сохранены');
 }
 

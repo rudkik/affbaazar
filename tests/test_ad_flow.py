@@ -198,7 +198,9 @@ async def main():
     assert "соцсет" in bot.last_dm()[0].lower(), bot.last_dm()
     await dp.feed_update(bot, cb("ads_soc_skip"))
     await dp.feed_update(bot, cb("ads_img_no"))
-    await dp.feed_update(bot, cb("ads_pin:8"))
+    # закреп сейчас занят первым объявлением (см. проверку закрепа в конце) — публикуем без него
+    assert "закреп сейчас занят" in bot.last_dm()[0].lower(), bot.last_dm()
+    await dp.feed_update(bot, cb("ads_pin:0"))
     await db.execute("UPDATE users SET tokens = 1 WHERE user_id = ?", (UID,))
     n = len(bot.channel)
     await dp.feed_update(bot, cb("ads_publish"))

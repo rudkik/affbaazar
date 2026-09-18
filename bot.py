@@ -20,8 +20,8 @@ log = logging.getLogger("bot")
 
 USER_COMMANDS = [
     BotCommand(command="start", description="Запустить бота"),
-    BotCommand(command="balance", description="Баланс токенов"),
-    BotCommand(command="buy", description="Купить токены"),
+    BotCommand(command="balance", description="Баланс коинов"),
+    BotCommand(command="buy", description="Купить коины"),
     BotCommand(command="ref", description="Пригласить друга"),
     BotCommand(command="site", description="Лента сообщений на сайте"),
 ]

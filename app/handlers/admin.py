@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from app import action_log, db, keyboards, services, site_db, subscription, tokens
+from app import action_log, db, keyboards, services, site_db, subscription, texts, tokens
 from app.config import ADMINS, PUBLIC_URL
 
 log = logging.getLogger(__name__)
@@ -302,15 +302,13 @@ SETTING_TITLES = {
     "restricted_text": "Текст для заблокированного юзера",
     "signup_bonus": "Токенов за подписку",
     "referral_bonus": "Токенов за приглашённого друга",
-    "message_cost": "Стоимость одного сообщения",
-    "token_packages": "Пакеты токенов (JSON)",
     "crypto_packages": "Пакеты за крипту USDT/USDC (JSON)",
     "welcome_message": "Глобальное приветствие",
     "no_tokens_text": "Текст при нехватке коинов",
     "bot_only_text": "Текст в режиме «только через бота»",
 }
 NUMERIC_SETTINGS = {"msg_ttl", "check_limit", "restrict_hours", "signup_bonus",
-                    "referral_bonus", "message_cost"}
+                    "referral_bonus"}
 
 
 @router.message(F.chat.type == ChatType.PRIVATE, F.text == "⚙️ Глобальные настройки")
@@ -327,7 +325,7 @@ async def show_settings(message: Message, state: FSMContext) -> None:
         f"⛔️ Блокировка: <b>{s['restrict_hours']}</b> ч.\n"
         f"🎁 Бонус за подписку: <b>{s['signup_bonus']}</b>\n"
         f"👥 Бонус за друга: <b>{s['referral_bonus']}</b>\n"
-        f"💸 Стоимость сообщения: <b>{s['message_cost']}</b>\n\n"
+        f"📢 Цена объявления: <b>{s['price_post']}</b>\n\n"
         f"Текст блокировки:\n<i>{html.escape(s['restricted_text'])}</i>",
         reply_markup=keyboards.settings_kb())
 
@@ -357,16 +355,18 @@ async def setting_input(message: Message, state: FSMContext) -> None:
             await message.answer("⚠️ Нужно число. Попробуйте ещё раз.")
             return
         value = str(max(0, int(value)))
-    if key in ("token_packages", "crypto_packages"):
+    if key == "crypto_packages":
         try:
             parsed = json.loads(message.text)
             assert isinstance(parsed, list)
             value = json.dumps(parsed, ensure_ascii=False)
         except Exception:  # noqa: BLE001
-            example = ('[{"stars": 50, "tokens": 50}]' if key == "token_packages"
-                       else '[{"usd": "5", "tokens": 50}]')
-            await message.answer(f'⚠️ Нужен JSON вида <code>{example}</code>')
+            await message.answer('⚠️ Нужен JSON вида <code>[{"usd": "5", "tokens": 50}]</code>')
             return
+    problem = texts.validate(key, value)
+    if problem:
+        await message.answer(f"⚠️ Текст не сохранён: {html.escape(problem)}.")
+        return
     await db.set_setting(key, value)
     await state.clear()
     await message.answer(f"✅ Сохранено: <b>{SETTING_TITLES.get(key, key)}</b> = "
@@ -401,9 +401,10 @@ async def cmd_hours(message: Message, command: CommandObject) -> None:
     await _set_numeric(message, command, "restrict_hours", "время блокировки (ч.)")
 
 
-@router.message(F.chat.type == ChatType.PRIVATE, Command("message_cost"))
+@router.message(F.chat.type == ChatType.PRIVATE, Command("message_cost", "price_post"))
 async def cmd_cost(message: Message, command: CommandObject) -> None:
-    await _set_numeric(message, command, "message_cost", "стоимость сообщения")
+    """Цена одна — price_post; /message_cost оставлена как привычный синоним."""
+    await _set_numeric(message, command, "price_post", "цена объявления")
 
 
 @router.message(F.chat.type == ChatType.PRIVATE, Command("signup_bonus"))
@@ -595,11 +596,11 @@ HELP_TEXT = (
     "/check_limit 10 — лимит проверок подписки (/лимит)\n"
     "/restrict_hours 48 — время блокировки (/блокировка)\n"
     "/restricted_text ... — текст для заблокированных (/текст)\n"
-    "/signup_bonus 30, /referral_bonus 10, /message_cost 1 — экономика коинов\n\n"
+    "/signup_bonus 30, /referral_bonus 10, /price_post 10 — экономика коинов\n\n"
     "<b>Токены и статистика</b>\n"
     "/give @user 100 — начислить или списать коины (/выдать)\n"
     "/stats — сводка (/статистика)\n"
-    "/refund &lt;charge_id&gt; — возврат оплаты Stars\n\n"
+    "/refund &lt;charge_id&gt; — возврат старой оплаты Stars\n\n"
     "<b>В самом чате, ответом на сообщение</b>\n"
     "/del — удалить сообщение и вернуть автору коины\n"
     "/repost — отправить сообщение в канал\n"

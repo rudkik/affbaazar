@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app import config, db, locks, tokens
+from app import config, db, locks, texts, tokens
 
 log = logging.getLogger(__name__)
 
@@ -281,21 +281,19 @@ async def _apply_locked(invoice: dict, reversal: Optional[dict]) -> dict:
     return {"action": "noop", "topup": topup}
 
 
-def describe(result: dict) -> Optional[str]:
-    """Текст для пользователя по результату apply_*; None — сообщать нечего."""
+async def describe(result: dict) -> Optional[str]:
+    """Текст для пользователя по результату apply_*; None — сообщать нечего.
+    Сами тексты редактируются в админке сайта (app/texts.py)."""
     action = result.get("action")
     if action == "credited":
-        head = ("✅ Оплата получена частично." if result.get("partial")
-                else "✅ Оплата получена.")
-        return (f"{head} Начислено <b>{result['tokens']}</b> коинов.\n"
-                f"Баланс: <b>{result['balance']}</b>.")
+        key = "txt_crypto_paid_partial" if result.get("partial") else "txt_crypto_paid"
+        return await texts.t(key, tokens=result["tokens"], balance=result["balance"])
     if action == "reversed":
-        return (f"⚠️ Платёж отменён сетью блокчейна. Списано обратно "
-                f"<b>{result['tokens']}</b> коинов.")
+        return await texts.t("txt_crypto_reversed", tokens=result["tokens"])
     if action == "status":
-        return {"confirming": "⏳ Платёж замечен, ждём подтверждения в сети.",
-                "expired": "⌛ Срок оплаты счёта истёк. Создайте новый.",
-                "cancelled": "✖️ Счёт отменён."}.get(result.get("status"))
+        key = {"confirming": "txt_crypto_confirming", "expired": "txt_crypto_expired",
+               "cancelled": "txt_crypto_cancelled"}.get(result.get("status"))
+        return await texts.t(key) if key else None
     return None
 
 

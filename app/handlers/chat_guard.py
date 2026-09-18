@@ -6,7 +6,7 @@ from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import ChatPermissions, Message
 
-from app import action_log, db, keyboards, services, site_db, subscription, tokens
+from app import action_log, db, keyboards, services, site_db, subscription, texts, tokens
 
 log = logging.getLogger(__name__)
 router = Router(name="chat_guard")
@@ -103,7 +103,7 @@ async def guard(message: Message, bot: Bot) -> None:
         return
 
     # --- 3. Списание токенов ----------------------------------------------
-    cost = await db.get_int("message_cost")
+    cost = await db.get_int("price_post")     # цена одна: объявление = сообщение в чат
     if cost > 0:
         ok = await tokens.charge(user.id, cost, "message",
                                  {"chat_id": chat_id, "message_id": message.message_id})
@@ -132,21 +132,34 @@ async def activate_if_needed(bot: Bot, user) -> None:
     bonus = await tokens.grant_signup_bonus(user.id)
     if bonus:
         try:
-            await bot.send_message(
-                user.id,
-                f"🎉 Подписка подтверждена! Начислено <b>{bonus}</b> коинов.\n"
-                f"Ими оплачиваются сообщения в чате.")
+            await bot.send_message(user.id, await texts.t(
+                "txt_signup_bonus", user, bonus=bonus, balance=await tokens.balance(user.id)))
         except TelegramAPIError:
-            pass
+            pass    # бота ещё не запускали или заблокировали — коины всё равно начислены
     referrer_id, ref_bonus = await tokens.reward_referrer(user.id)
     if referrer_id and ref_bonus:
         try:
-            await bot.send_message(
-                referrer_id,
-                f"👥 Твой друг {services.user_mention(user)} активировался — "
-                f"начислено <b>{ref_bonus}</b> коинов.")
+            await bot.send_message(referrer_id, await texts.t(
+                "txt_referral_reward", friend=services.user_mention(user), bonus=ref_bonus))
         except TelegramAPIError:
             pass
+
+
+async def activate_if_subscribed(bot: Bot, user) -> bool:
+    """Бонус за подписку без нажатия «Я подписался» (AffBazaar-15).
+
+    Зовётся при /start, при создании объявления и когда Telegram сообщил о вступлении в канал.
+    Если пользователь уже подписан, а коины ему ещё не начисляли — начисляем и благодарим.
+    Повторно не начислит: право на бонус хранится в users.activated и переживает удаление
+    бота и переписки (строка пользователя в базе не удаляется никогда).
+    """
+    row = await db.get_user(user.id)
+    if row and row["activated"]:
+        return False
+    if not await subscription.confirmed_for_ads(bot, user.id):
+        return False
+    await activate_if_needed(bot, user)
+    return True
 
 
 @router.callback_query(F.data == "check_sub")
@@ -160,13 +173,12 @@ async def check_sub(callback, bot: Bot) -> None:
     subscription.invalidate(user.id, chat_id)
     missing = await subscription.missing_channels(bot, user.id, chat_id)
     if missing:
-        await callback.answer("Подписка не найдена. Проверь, что подписан на все каналы.",
-                              show_alert=True)
+        await callback.answer(await texts.t("txt_sub_not_found"), show_alert=True)
         return
     await db.update_state(user.id, chat_id, fail_streak=0, subscribed=1)
     await activate_if_needed(bot, user)
     balance = await tokens.balance(user.id)
-    await callback.answer(f"Готово! Можешь писать. Баланс: {balance} коинов.", show_alert=True)
+    await callback.answer(await texts.t("txt_sub_ok", balance=balance), show_alert=True)
     state = await db.get_state(user.id, chat_id)
     if state["last_prompt_msg_id"]:
         await services.delete_quiet(bot, chat_id, state["last_prompt_msg_id"])

@@ -174,20 +174,16 @@ async def main():
     assert all("Статистика" not in s[1] for s in bot.sent[n:]), bot.sent[n:]
     print("права админа OK: обычный юзер команды не получает")
 
-    # --- покупка токенов ---------------------------------------------------
-    await dp.feed_update(bot, cb("buy:0", B, B, chat_type="private"))
-    assert bot.invoices, "счёт выставлен"
-    chat_id, title, currency, amount, payload = bot.invoices[-1]
-    assert chat_id == B and currency == "XTR" and amount == 50, bot.invoices[-1]
-    print("счёт OK:", title, "/", amount, currency)
-
+    # --- покупка за Stars убрана (AffBazaar-13): старая кнопка счёт не выставляет ---------
     before = await tk.balance(B)
+    await dp.feed_update(bot, cb("buy:0", B, B, chat_type="private"))
+    assert not bot.invoices, "счёт в Stars больше не выставляется"
+    assert "отключена" in bot.alerts[-1], bot.alerts[-1]
+    # даже если дойдёт «успешная оплата» по старому счёту — обработчика начисления больше нет
     await dp.feed_update(bot, paid(B, tokens=50, stars=50))
-    assert await tk.balance(B) == before + 50, await tk.balance(B)
-    pay = await db.fetchone("SELECT * FROM payments WHERE charge_id = 'charge_abc'")
-    assert pay and pay["tokens"] == 50 and pay["currency"] == "XTR", dict(pay) if pay else None
-    assert any(s[0] == ADMIN and "Оплата" in s[1] for s in bot.sent), "админ уведомлён об оплате"
-    print("оплата OK: начислено 50, баланс =", await tk.balance(B))
+    assert await tk.balance(B) == before, await tk.balance(B)
+    assert await db.scalar("SELECT COUNT(*) FROM payments WHERE currency = 'XTR'") == 0
+    print("Stars OK: счёт не выставляется, коины за звёзды не начисляются")
 
     # --- автоудаление сообщения бота по таймеру ---------------------------
     await db.set_setting("msg_ttl", 1)

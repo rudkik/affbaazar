@@ -3,12 +3,13 @@
 Telegram присылает апдейт `chat_member` только если бот — администратор чата.
 Здесь мы пишем каждое такое событие в базу: карточку пользователя, таблицу
 channel_subs и (для основного канала объявлений) поля users.subscribed /
-users.first_subscribed_at.
+users.first_subscribed_at. Вступившему в канал сразу начисляется бонус за подписку,
+если бот у него уже запущен (reward_new_subscriber).
 """
 import logging
 from typing import Optional
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import IS_MEMBER, IS_NOT_MEMBER, ChatMemberUpdatedFilter
 from aiogram.types import ChatMemberUpdated
 
@@ -52,7 +53,7 @@ async def _is_tracked(chat) -> bool:
     return row is not None
 
 
-async def handle_membership(event: ChatMemberUpdated) -> None:
+async def handle_membership(event: ChatMemberUpdated, bot=None) -> None:
     """Общая обработка входа и выхода."""
     user = event.new_chat_member.user
     if user is None or user.is_bot:
@@ -70,12 +71,30 @@ async def handle_membership(event: ChatMemberUpdated) -> None:
                                  is_main=event.chat.id == main_id)
     log.info("chat_member: user=%s channel=%s подписан=%s (статус %s)",
              user.id, event.chat.id, subscribed, _status(event.new_chat_member))
+    if subscribed and bot is not None:
+        await reward_new_subscriber(bot, user)
+
+
+async def reward_new_subscriber(bot, user) -> bool:
+    """Вступил в канал: если бот у человека уже запущен — сразу начисляем бонус и пишем
+    «Спасибо, что подписались…». Если бота ещё не запускали, написать ему нельзя: бонус
+    подождёт первого /start (там та же проверка), чтобы благодарность не потерялась.
+    """
+    row = await db.get_user(user.id)
+    if not row or not row["started"] or row["activated"]:
+        return False
+    from app.handlers.chat_guard import activate_if_subscribed
+    try:
+        return await activate_if_subscribed(bot, user)
+    except Exception:  # noqa: BLE001 — учёт вступления важнее бонуса
+        log.exception("Не удалось начислить бонус за подписку user=%s", user.id)
+        return False
 
 
 @router.chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_MEMBER))
-async def on_joined(event: ChatMemberUpdated) -> None:
+async def on_joined(event: ChatMemberUpdated, bot: Bot) -> None:
     """Вступил (member / administrator / creator / restricted с is_member)."""
-    await handle_membership(event)
+    await handle_membership(event, bot)
 
 
 @router.chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_NOT_MEMBER))

@@ -39,10 +39,6 @@ SECRET_KEY=${SECRET}
 PUBLIC_URL=https://${DOMAIN}
 WEBAPP_URL=https://${DOMAIN}
 
-# --- Оплата ---
-# Пусто = Telegram Stars (XTR). Для фиата — provider_token из @BotFather.
-PAYMENT_PROVIDER_TOKEN=
-
 # --- Оплата криптой (USDT/USDC через CryptoPay, см. INTEGRATION.md) ---
 # Пусто = кнопки «Оплатить криптой» в боте нет. Ключ и секрет — из карточки сервиса в админке процессинга.
 # В карточку сервиса впишите вебхук: https://${DOMAIN}/webhooks/cryptopay

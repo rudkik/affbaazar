@@ -1,91 +1,37 @@
-"""Покупка токенов внутри бота: Telegram Stars (XTR), классический провайдер
-или криптовалюта USDT/USDC через CryptoPay (app/cryptopay.py)."""
+"""Покупка коинов внутри бота — только криптовалюта USDT/USDC через CryptoPay
+(app/cryptopay.py). Покупка за Telegram Stars убрана (AffBazaar-13): остался лишь возврат
+старых Stars-платежей командой /refund.
+"""
 import html
-import json
 import logging
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
-from aiogram.types import (CallbackQuery, LabeledPrice, Message, PreCheckoutQuery)
+from aiogram.types import CallbackQuery, Message, PreCheckoutQuery
 
-from app import cryptopay, db, keyboards, tokens
-from app.config import ADMINS, PAYMENT_PROVIDER_TOKEN, cryptopay_enabled
+from app import cryptopay, db, keyboards, texts, tokens
+from app.config import ADMINS, cryptopay_enabled
 
 log = logging.getLogger(__name__)
 router = Router(name="payments")
 
-CURRENCY = "XTR" if not PAYMENT_PROVIDER_TOKEN else "RUB"
-
-
-async def packages() -> list[dict]:
-    try:
-        return json.loads(await db.get_setting("token_packages"))
-    except (json.JSONDecodeError, TypeError):
-        return []
+STARS_OFF = "Оплата звёздами отключена. Коины можно купить за USDT/USDC."
 
 
 @router.callback_query(F.data.startswith("buy:"))
-async def buy(callback: CallbackQuery, bot: Bot) -> None:
-    index = int(callback.data.split(":")[1])
-    items = await packages()
-    if index >= len(items):
-        await callback.answer("Пакет недоступен", show_alert=True)
-        return
-    pack = items[index]
-    price = int(pack["stars"])
-    amount = price if CURRENCY == "XTR" else price * 100  # для фиата — копейки
-    try:
-        await bot.send_invoice(
-            chat_id=callback.from_user.id,
-            title=f"{pack['tokens']} коинов",
-            description=f"Пакет из {pack['tokens']} коинов для публикации объявлений и сообщений.",
-            payload=json.dumps({"tokens": int(pack["tokens"]), "index": index}),
-            provider_token=PAYMENT_PROVIDER_TOKEN,
-            currency=CURRENCY,
-            prices=[LabeledPrice(label=f"{pack['tokens']} коинов", amount=amount)],
-        )
-    except TelegramAPIError as exc:
-        log.warning("send_invoice failed: %s", exc)
-        await callback.answer("Не удалось выставить счёт. Проверьте настройки платежей.",
-                              show_alert=True)
-        return
-    await callback.answer()
+async def buy_stars_disabled(callback: CallbackQuery) -> None:
+    """Кнопки «N коинов — M ⭐» остались в старых сообщениях: объясняем и даём крипто-пакеты."""
+    await callback.answer(STARS_OFF, show_alert=True)
+    if cryptopay_enabled():
+        await callback.message.answer(await texts.t("txt_buy_menu", callback.from_user),
+                                      reply_markup=await keyboards.packages_kb())
 
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery, bot: Bot) -> None:
-    await bot.answer_pre_checkout_query(query.id, ok=True)
-
-
-@router.message(F.successful_payment)
-async def on_paid(message: Message) -> None:
-    sp = message.successful_payment
-    try:
-        payload = json.loads(sp.invoice_payload)
-        amount_tokens = int(payload["tokens"])
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-        log.error("Некорректный payload платежа: %s", sp.invoice_payload)
-        amount_tokens = 0
-
-    await db.execute(
-        """INSERT INTO payments(user_id, amount, currency, tokens, charge_id, payload)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (message.from_user.id, sp.total_amount, sp.currency, amount_tokens,
-         sp.telegram_payment_charge_id, sp.invoice_payload))
-
-    balance = await tokens.add(message.from_user.id, amount_tokens, "purchase",
-                              {"charge_id": sp.telegram_payment_charge_id,
-                               "amount": sp.total_amount, "currency": sp.currency})
-    await message.answer(f"✅ Оплата получена. Начислено <b>{amount_tokens}</b> коинов.\n"
-                         f"Баланс: <b>{balance}</b>.")
-    for admin_id in ADMINS:
-        try:
-            await message.bot.send_message(
-                admin_id, f"💳 Оплата: @{message.from_user.username or message.from_user.id} — "
-                          f"{sp.total_amount} {sp.currency} → {amount_tokens} коинов.")
-        except TelegramAPIError:
-            pass
+    """Счёт в Stars, выставленный до отключения, оплатить нельзя: отклоняем до списания."""
+    await bot.answer_pre_checkout_query(query.id, ok=False, error_message=STARS_OFF)
 
 
 @router.message(Command("refund"))
@@ -128,28 +74,21 @@ async def _show(callback: CallbackQuery, text: str, kb) -> None:
         await callback.message.answer(text, reply_markup=kb)
 
 
-@router.callback_query(F.data == "buy_menu")
-async def back_to_packages(callback: CallbackQuery) -> None:
-    await _show(callback, "💎 Выбери пакет коинов:", await keyboards.packages_kb())
-    await callback.answer()
-
-
-@router.callback_query(F.data == "crypto")
+@router.callback_query(F.data.in_({"buy_menu", "crypto"}))
 async def crypto_menu(callback: CallbackQuery) -> None:
+    """Список пакетов. Оба callback-а живут в старых сообщениях — ведут в одно меню."""
     if not cryptopay_enabled():
-        await callback.answer("Оплата криптой пока недоступна", show_alert=True)
+        await callback.answer(texts.plain(await texts.t("txt_buy_disabled")), show_alert=True)
         return
-    items = await cryptopay.packages()
-    await _show(callback, "🪙 Оплата в USDT или USDC (сети Tron, BSC, Ethereum).\n"
-                          "Выбери пакет — я выставлю счёт со ссылкой на оплату:",
-                keyboards.crypto_packages_kb(items))
+    await _show(callback, await texts.t("txt_buy_menu", callback.from_user),
+                await keyboards.packages_kb())
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("cbuy:"))
 async def crypto_buy(callback: CallbackQuery, bot: Bot) -> None:
     if not cryptopay_enabled():
-        await callback.answer("Оплата криптой пока недоступна", show_alert=True)
+        await callback.answer(texts.plain(await texts.t("txt_buy_disabled")), show_alert=True)
         return
     index = int(callback.data.split(":")[1])
     items = await cryptopay.packages()
@@ -166,14 +105,11 @@ async def crypto_buy(callback: CallbackQuery, bot: Bot) -> None:
         topup = await cryptopay.create_topup(callback.from_user.id, pack, success_url=success_url)
     except cryptopay.CryptoPayError as exc:
         log.warning("cryptopay: не удалось создать счёт: %s", exc)
-        await callback.answer("Не удалось выставить счёт, попробуйте позже.", show_alert=True)
+        await callback.answer(await texts.t("txt_crypto_failed"), show_alert=True)
         return
     await callback.message.answer(
-        f"🪙 Счёт №{topup['id']}: <b>{topup['tokens']}</b> коинов за "
-        f"<b>{topup['amount']} USDT/USDC</b>.\n\n"
-        "Нажми «Оплатить», выбери сеть и монету и переведи точную сумму. "
-        "Счёт действует 60 минут. Коины начислятся автоматически после подтверждения в сети; "
-        "если сообщение не пришло — нажми «Проверить оплату».",
+        await texts.t("txt_crypto_invoice", callback.from_user, id=topup["id"],
+                      tokens=topup["tokens"], amount=topup["amount"]),
         reply_markup=keyboards.crypto_invoice_kb(topup))
     await callback.answer()
 
@@ -194,7 +130,7 @@ async def crypto_status(callback: CallbackQuery, bot: Bot) -> None:
         await callback.answer("Не удалось проверить оплату, попробуйте позже.", show_alert=True)
         return
     result = await cryptopay.apply_invoice(invoice)
-    text = cryptopay.describe(result)
+    text = await cryptopay.describe(result)
     if result.get("action") == "credited":
         await callback.message.answer(text)
         await notify_admins(bot, f"🪙 Оплата криптой: @{callback.from_user.username or callback.from_user.id} — "
@@ -202,5 +138,12 @@ async def crypto_status(callback: CallbackQuery, bot: Bot) -> None:
                                  f"→ {result['tokens']} коинов.")
         await callback.answer()
         return
-    await callback.answer(text or f"Статус: {cryptopay.summary(result.get('topup') or topup)}",
-                          show_alert=True)
+    await callback.answer(
+        texts.plain(text) if text
+        else f"Статус: {cryptopay.summary(result.get('topup') or topup)}", show_alert=True)
+
+
+@router.callback_query(F.data == "noop")
+async def noop(callback: CallbackQuery) -> None:
+    """Кнопка-заглушка («временно недоступно»): просто гасим индикатор загрузки."""
+    await callback.answer()

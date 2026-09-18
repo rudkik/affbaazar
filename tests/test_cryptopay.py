@@ -117,10 +117,12 @@ async def main():
     assert not cp.verify("100", raw, sig, secret="", now=200)         # секрет не задан
     assert not cp.verify("abc", raw, sig, secret="s", now=200)
 
-    # --- пакеты: в меню покупки есть кнопка крипты, у неё свои пакеты
+    # --- пакеты: меню покупки — сразу крипто-пакеты, звёзд нет (AffBazaar-13)
     from app import keyboards
     kb = await keyboards.packages_kb()
-    assert any(b.callback_data == "crypto" for row in kb.inline_keyboard for b in row)
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    assert [b.callback_data for b in buttons] == ["cbuy:0", "cbuy:1", "cbuy:2"], buttons
+    assert all("USDT" in b.text and "⭐" not in b.text for b in buttons), buttons
     packs = await cp.packages()
     assert packs[0] == {"usd": "5.00", "tokens": 50}
     await db.set_setting("crypto_packages", json.dumps([{"usd": "5", "tokens": 50},
@@ -279,10 +281,10 @@ async def main():
     assert (await cp.get_topup(6))["status"] == "cancelled"
     cp.request = fake_request
 
-    # --- без ключа кнопки крипты нет
+    # --- без ключа пакетов нет: вместо них заглушка «временно недоступна»
     cfg.CRYPTOPAY_API_KEY = ""
     kb = await keyboards.packages_kb()
-    assert not any(b.callback_data == "crypto" for row in kb.inline_keyboard for b in row)
+    assert [b.callback_data for row in kb.inline_keyboard for b in row] == ["noop"]
     await feed(cb("crypto"))
     assert "недоступна" in bot.alerts[-1]
 

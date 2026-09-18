@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import auth, cryptopay, db, site_db
+from app import auth, cryptopay, db, site_db, texts
 from app.config import ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
 
 # На боевом домене (https) куки отдаём только по защищённому соединению.
@@ -510,11 +510,26 @@ async def admin_get_settings(_: bool = Depends(require_admin)):
     return await db.all_settings()
 
 
+@app.get("/admin/api/texts")
+async def admin_texts(_: bool = Depends(require_admin)):
+    """Реестр редактируемых текстов бота: ключ, название, значение по умолчанию, переменные."""
+    return texts.registry()
+
+
 @app.post("/admin/api/settings")
 async def admin_set_settings(payload: dict, _: bool = Depends(require_admin)):
-    for key, value in payload.items():
-        if key in db.DEFAULT_SETTINGS:
-            await db.set_setting(key, value)
+    values = {key: "" if value is None else str(value)
+              for key, value in payload.items() if key in db.DEFAULT_SETTINGS}
+    # Тексты уходят в Telegram с parse_mode=HTML: незакрытый тег ломает отправку сообщения
+    # целиком (бот «молчит»). Поэтому сначала проверяем всё, и если есть ошибка — не
+    # сохраняем ничего, чтобы не оставить настройки в половинчатом состоянии.
+    labels = {item["key"]: item["label"] for item in texts.registry()}
+    problems = [f"«{labels.get(key, key)}»: {problem}" for key, value in values.items()
+                if (problem := texts.validate(key, value))]
+    if problems:
+        raise HTTPException(status_code=400, detail="Не сохранено. " + "; ".join(problems))
+    for key, value in values.items():
+        await db.set_setting(key, value)
     return {"ok": True, "settings": await db.all_settings()}
 
 
@@ -586,7 +601,7 @@ async def cryptopay_webhook(request: Request):
 
 async def _cryptopay_notify(result: dict, event: dict) -> None:
     """Сообщить пользователю (и админам о зачислении). Ошибки Telegram не мешают ответить 200."""
-    text = cryptopay.describe(result)
+    text = await cryptopay.describe(result)
     topup = result.get("topup")
     if not BOT or not text or not topup:
         return

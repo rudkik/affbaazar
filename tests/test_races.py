@@ -121,7 +121,9 @@ async def main():
 
     print("\n--- двойной тап «Опубликовать» (денег ровно на одно объявление) ---")
     await db.upsert_user(UID, "racer", "Гонщик")
-    await db.execute("UPDATE users SET tokens = 10 WHERE user_id = ?", (UID,))
+    # activated = 1: бонус за подписку уже получен, иначе он начислится на входе в мастер
+    # (AffBazaar-15) и собьёт расчёт «денег ровно на одно объявление».
+    await db.execute("UPDATE users SET tokens = 10, activated = 1 WHERE user_id = ?", (UID,))
     await to_confirm(dp, bot, UID)
     n = len(bot.channel)
     await asyncio.gather(dp.feed_update(bot, cb("ads_publish")),
