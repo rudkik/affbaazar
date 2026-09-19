@@ -160,6 +160,15 @@ CREATE TABLE IF NOT EXISTS cryptopay_deliveries (
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
+-- Обращения в поддержку (второй бот, app/support.py): один пользователь = один топик форума.
+CREATE TABLE IF NOT EXISTS support_tickets (
+    user_id    INTEGER PRIMARY KEY,
+    topic_id   INTEGER,
+    banned     INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS ad_types (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL UNIQUE,
@@ -269,6 +278,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "price_image":      "5",      # доплата за картинку
     "price_pin_4h":     "15",     # доплата за закреп на 4 часа
     "price_pin_8h":     "25",     # доплата за закреп на 8 часов
+    "ad_dup_hours":     "1",      # часов, в течение которых нельзя повторить то же объявление (0 = выкл)
+    "support_link":     "https://t.me/aff_bazzar_support_bot",   # кнопка «Поддержка» (пусто = скрыта)
     "rules_version":    "1",      # смена версии заставит принять правила заново
     "rules_text":       RULES_TEXT_DEFAULT,
     "intro_note":       "В этой рубрике можно рассказать о себе и оставить свои соцсети, "
@@ -353,7 +364,8 @@ USERS_ADDED_COLUMNS: dict[str, str] = {
 # Колонки ads, добавленные после первого релиза — тем же способом, что и users.
 ADS_ADDED_COLUMNS: dict[str, str] = {
     "socials":     "TEXT",   # ссылки на соцсети (шаг мастера для рубрики «Интро»)
-    "delete_kind": "TEXT",   # author | moderator; NULL у старых строк = удалял модератор
+    "delete_kind": "TEXT",   # author | moderator | reposted; NULL у старых строк = удалял модератор
+    "repost_of":   "INTEGER",  # id объявления, которое «продлили» этой публикацией
 }
 
 
@@ -612,7 +624,8 @@ async def user_violations(user_id: int) -> dict[str, int]:
         """SELECT COUNT(*) AS deleted_total,
                   SUM(CASE WHEN COALESCE(delete_kind, 'moderator') = 'moderator'
                            THEN 1 ELSE 0 END) AS deleted_by_moderator
-             FROM ads WHERE user_id = ? AND status = 'deleted'""",
+             FROM ads WHERE user_id = ? AND status = 'deleted'
+              AND COALESCE(delete_kind, '') <> 'reposted'""",
         (user_id,))
     return {"deleted_total": int(row["deleted_total"] or 0) if row else 0,
             "deleted_by_moderator": int(row["deleted_by_moderator"] or 0) if row else 0}

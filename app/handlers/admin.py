@@ -668,12 +668,15 @@ SETTING_TITLES.update({
     "price_image": "Доплата за картинку",
     "price_pin_4h": "Закреп на 4 часа",
     "price_pin_8h": "Закреп на 8 часов",
+    "ad_dup_hours": "Запрет дублей (часов)",
+    "support_link": "Ссылка на бот поддержки",
     "rules_text": "Текст правил",
     "intro_note": "Заметка для рубрики «Интро/Знакомства»",
     "site_title": "Название сайта",
     "site_tagline": "Подзаголовок сайта",
 })
-NUMERIC_SETTINGS.update({"price_post", "price_image", "price_pin_4h", "price_pin_8h"})
+NUMERIC_SETTINGS.update({"price_post", "price_image", "price_pin_4h", "price_pin_8h",
+                         "ad_dup_hours"})
 
 
 @router.message(F.chat.type == ChatType.PRIVATE, Command("set_channel"))

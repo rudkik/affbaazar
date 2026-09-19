@@ -113,6 +113,9 @@ async def main():
     await db.init(); await sdb.init()
     await db.set_setting("ad_channel_id", CHANNEL)
     await db.set_setting("ad_channel_title", "Канал")
+    # здесь один и тот же текст публикуется много раз подряд — запрет дублей (AffBazaar-19)
+    # проверяется отдельно в test_tracker2.py, тут его выключаем
+    await db.set_setting("ad_dup_hours", 0)
     dp = Dispatcher(storage=MemoryStorage())
     for r in (admin.router, moderation.router, post.router, payments.router,
               user_h.router, chat_guard.router):

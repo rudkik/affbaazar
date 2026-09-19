@@ -154,6 +154,15 @@ async def mark_deleted(source_chat_id: int, source_message_id: int) -> None:
     await conn().commit()
 
 
+async def set_pinned_until(source_chat_id: int, source_message_id: int,
+                           pinned_until: Optional[str]) -> None:
+    """Закреп докупили к уже опубликованному объявлению — отмечаем на сайте."""
+    await conn().execute(
+        "UPDATE posts SET pinned_until = ? WHERE source_chat_id = ? AND source_message_id = ?",
+        (pinned_until, source_chat_id, source_message_id))
+    await conn().commit()
+
+
 async def mark_reposted(source_chat_id: int, source_message_id: int,
                         channel_id: int, channel_message_id: int) -> None:
     await conn().execute(

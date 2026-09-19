@@ -33,6 +33,12 @@ if [ -n "$(env_get CRYPTOPAY_API_KEY)" ] && [ -z "$(env_get CRYPTOPAY_WEBHOOK_SE
     echo   "    Возьмите Webhook secret в карточке сервиса на ${CP_URL:-https://ubaduba.top}"
 fi
 
+# Бот поддержки: токен без группы — бот не запустится
+if [ -n "$(env_get SUPPORT_BOT_TOKEN)" ] && [ -z "$(env_get SUPPORT_CHAT_ID)" ]; then
+    yellow "  ! SUPPORT_BOT_TOKEN задан, а SUPPORT_CHAT_ID пуст — бот поддержки не запустится."
+    echo   "    Укажите id форум-группы поддержки (вида -100…), см. DEPLOY.md «Бот поддержки»"
+fi
+
 PUBLIC_URL=$(env_get PUBLIC_URL)
 case "$PUBLIC_URL" in
     https://*) ;;

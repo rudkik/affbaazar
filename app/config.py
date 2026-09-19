@@ -9,6 +9,22 @@ load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
+# Бот поддержки (@aff_bazzar_support_bot): отдельный токен и форум-группа с топиками,
+# куда попадают обращения. Пусто = бот поддержки не запускается (app/support.py).
+SUPPORT_BOT_TOKEN = os.getenv("SUPPORT_BOT_TOKEN", "").strip()
+
+
+def _chat_id(raw: str) -> int:
+    """ID супергруппы: принимаем и «-100…», и голый номер из адресной строки Telegram."""
+    raw = (raw or "").strip()
+    if not raw.lstrip("-").isdigit():
+        return 0
+    value = int(raw)
+    return value if value < 0 else int(f"-100{value}")
+
+
+SUPPORT_CHAT_ID = _chat_id(os.getenv("SUPPORT_CHAT_ID", ""))
+
 def _ids(raw: str) -> set[int]:
     out = set()
     for part in (raw or "").replace(";", ",").split(","):

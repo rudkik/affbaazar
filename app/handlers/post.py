@@ -313,6 +313,11 @@ async def on_text(message: Message, state: FSMContext, bot: Bot) -> None:
         # остаёмся в Post.text — ждём тот же текст ещё раз, уже без ссылок
         await message.answer(text_rules.violations_text(violations))
         return
+    # Дубль недавнего объявления (AffBazaar-19): говорим сразу, не гоняя по остальным шагам.
+    dup = await ads.find_duplicate(message.from_user.id, body)
+    if dup:
+        await message.answer(await ads.duplicate_block_text(message.from_user, dup))
+        return
     update = {"text": body}
     if is_photo:
         update["media_type"] = "photo"
@@ -438,6 +443,11 @@ async def _do_publish(callback: CallbackQuery, state: FSMContext, bot: Bot, user
                                    vertical_row=vertical_row, media_type=media_type,
                                    media_file_id=media_file_id, pin_hours=pin_hours,
                                    socials=data.get("socials"))
+    except ads.DuplicateError as exc:
+        # текст успели опубликовать другим путём (например, «продлить» в «Моих объявлениях»)
+        await state.clear()
+        await bot.send_message(chat_id, str(exc))
+        return
     except ads.PinBusyError as exc:
         # Закреп успели купить между подтверждением и публикацией. Деньги не списаны:
         # возвращаем на выбор закрепа (там теперь только «без закрепа»).

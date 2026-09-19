@@ -30,6 +30,8 @@ def topup_kb(bot_username: str) -> InlineKeyboardMarkup:
 
 BTN_CHANNEL = "📣 Канал Aff Bazaar"
 BTN_SITE = "🌐 Наш сайт"
+BTN_MY_ADS = "📋 Мои объявления"
+BTN_SUPPORT = "🆘 Поддержка"
 # Кнопка рефералов подписывается текущим бонусом, поэтому сравнивать её текст
 # можно только по префиксу — см. user.is_menu_button().
 BTN_REFERRAL = "👥 Пригласить друга"
@@ -43,16 +45,24 @@ async def main_menu(bonus: Optional[int] = None) -> ReplyKeyboardMarkup:
     # Mini App пока убрана (кнопка web_app и Menu Button): вместо неё две ссылки — канал и сайт.
     if bonus is None:
         bonus = await db.get_int("referral_bonus")
+    last = [KeyboardButton(text="📜 Правила")]
+    if (await db.get_setting("support_link")).strip():
+        last.append(KeyboardButton(text=BTN_SUPPORT))
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_CHANNEL), KeyboardButton(text=BTN_SITE)],
-            [KeyboardButton(text="📢 Создать объявление")],
+            [KeyboardButton(text="📢 Создать объявление"), KeyboardButton(text=BTN_MY_ADS)],
             [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="💎 Купить коины")],
             [KeyboardButton(text=referral_btn(bonus)), KeyboardButton(text="📊 Мой профиль")],
-            [KeyboardButton(text="📜 Правила")],
+            last,
         ],
         resize_keyboard=True,
     )
+
+
+def support_kb(link: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✍️ Написать в поддержку", url=link)]])
 
 
 def links_kb(channel_url: Optional[str], site_url: str) -> InlineKeyboardMarkup:
@@ -138,6 +148,7 @@ def settings_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🖼 Доплата за картинку", callback_data="gs:price_image")],
         [InlineKeyboardButton(text="📌 Закреп 4 часа", callback_data="gs:price_pin_4h")],
         [InlineKeyboardButton(text="📌 Закреп 8 часов", callback_data="gs:price_pin_8h")],
+        [InlineKeyboardButton(text="🚫 Запрет дублей (часов)", callback_data="gs:ad_dup_hours")],
         [InlineKeyboardButton(text="📜 Текст правил", callback_data="gs:rules_text")],
         [InlineKeyboardButton(text="🪙 Пакеты коинов за крипту (JSON)", callback_data="gs:crypto_packages")],
     ])

@@ -4,6 +4,7 @@
 """
 import html
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -24,6 +25,10 @@ class AdError(Exception):
 
 class PinBusyError(AdError):
     """Закреп уже куплен другим объявлением. Текст ошибки — готовое сообщение (HTML)."""
+
+
+class DuplicateError(AdError):
+    """Такое же объявление уже публиковалось недавно. Текст ошибки — готовое сообщение (HTML)."""
 
 
 # ------------------------------------------------------------------ цена
@@ -92,6 +97,55 @@ async def pin_busy_text(user=None) -> Optional[str]:
                          left=pin_left_text(until))
 
 
+# ------------------------------------------------------------------ дубли
+_WS = re.compile(r"\s+")
+
+
+def normalize_text(text: Optional[str]) -> str:
+    """Ключ сравнения объявлений: регистр, пробелы и переносы не считаются отличием."""
+    return _WS.sub(" ", str(text or "")).strip().lower()
+
+
+async def find_duplicate(user_id: int, text: str, exclude_ad_id: Optional[int] = None):
+    """Объявление того же автора с тем же текстом за последние ad_dup_hours часов (или None).
+
+    Смотрим по всем статусам: удалённое модератором объявление повторять сразу тоже нельзя.
+    """
+    hours = await db.get_int("ad_dup_hours")
+    key = normalize_text(text)
+    if hours <= 0 or not key:
+        return None
+    since = db.iso(db.utcnow() - timedelta(hours=hours))
+    rows = await db.fetchall(
+        """SELECT id, text, created_at FROM ads
+           WHERE user_id = ? AND created_at > ? AND id <> ? ORDER BY id DESC LIMIT 50""",
+        (user_id, since, exclude_ad_id or 0))
+    for row in rows:
+        if normalize_text(row["text"]) == key:
+            return row
+    return None
+
+
+def minutes_left_text(minutes: int) -> str:
+    minutes = max(1, int(minutes))
+    hours, mins = divmod(minutes, 60)
+    if hours and mins:
+        return f"{hours} ч {mins} мин"
+    return f"{hours} ч" if hours else f"{mins} мин"
+
+
+async def duplicate_block_text(user, dup) -> str:
+    """Сообщение «нельзя постить дубли…»: сколько ждать считаем в минутах — это не зависит
+    от часового пояса пользователя, который Telegram боту не отдаёт."""
+    hours = await db.get_int("ad_dup_hours")
+    created = db.parse_iso(dup["created_at"]) or db.utcnow()
+    free_at = created + timedelta(hours=hours)
+    left = (free_at - db.utcnow()).total_seconds() / 60
+    return await texts.t("txt_ad_duplicate", user, hours=hours,
+                         left=minutes_left_text(-(-left // 1)),
+                         until=pin_until_text(free_at))
+
+
 # ------------------------------------------------------------------ текст поста
 SOCIALS_TITLE = "🔗 Соцсети:"
 
@@ -156,15 +210,18 @@ async def is_channel_admin(bot: Bot, user_id: int) -> bool:
 # ------------------------------------------------------------------ публикация
 async def publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=None,
                      media_type: str = "text", media_file_id: Optional[str] = None,
-                     pin_hours: int = 0, socials: Optional[str] = None) -> dict[str, Any]:
+                     pin_hours: int = 0, socials: Optional[str] = None,
+                     repost_of: Optional[int] = None) -> dict[str, Any]:
     """Публикует объявление в канал, списывает коины, зеркалит на сайт.
 
-    Возвращает {"ad_id", "message_id", "cost", "balance"}. Кидает AdError.
+    Возвращает {"ad_id", "message_id", "cost", "balance"}. Кидает AdError
+    (DuplicateError — такой же текст публиковался недавно, PinBusyError — закреп занят).
     """
     if not pin_hours:
         return await _publish_ad(bot, user, text=text, ad_type_row=ad_type_row,
                                  vertical_row=vertical_row, media_type=media_type,
-                                 media_file_id=media_file_id, pin_hours=0, socials=socials)
+                                 media_file_id=media_file_id, pin_hours=0, socials=socials,
+                                 repost_of=repost_of)
     # Закреп один на канал: проверка «свободен ли» и сама публикация идут под одной
     # блокировкой, иначе два одновременных покупателя оба увидят «свободно».
     async with locks.named("ad_pin"):
@@ -174,13 +231,17 @@ async def publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=Non
         return await _publish_ad(bot, user, text=text, ad_type_row=ad_type_row,
                                  vertical_row=vertical_row, media_type=media_type,
                                  media_file_id=media_file_id, pin_hours=pin_hours,
-                                 socials=socials)
+                                 socials=socials, repost_of=repost_of)
 
 
 async def _publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=None,
                       media_type: str = "text", media_file_id: Optional[str] = None,
-                      pin_hours: int = 0, socials: Optional[str] = None) -> dict[str, Any]:
+                      pin_hours: int = 0, socials: Optional[str] = None,
+                      repost_of: Optional[int] = None) -> dict[str, Any]:
     channel_id, channel_title = await ad_channel(bot)
+    dup = await find_duplicate(user.id, text)
+    if dup:
+        raise DuplicateError(await duplicate_block_text(user, dup))
     has_image = bool(media_file_id) and media_type != "text"
     quote = await price_quote(has_image, pin_hours)
 
@@ -194,15 +255,15 @@ async def _publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=No
         """INSERT INTO ads(user_id, channel_id, ad_type_id, ad_type_name, ad_type_tag,
                            vertical_id, vertical_name, vertical_tag, text, socials,
                            media_type, media_file_id, cost_base, cost_image, cost_pin,
-                           cost_total, pin_hours)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           cost_total, pin_hours, repost_of)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (user.id, channel_id,
          ad_type_row["id"] if ad_type_row else None,
          ad_type_row["name"] if ad_type_row else None, ad_type_tag,
          vertical_row["id"] if vertical_row else None,
          vertical_row["name"] if vertical_row else None, vertical_tag,
          text, socials, media_type, media_file_id,
-         quote["base"], quote["image"], quote["pin"], quote["total"], pin_hours))
+         quote["base"], quote["image"], quote["pin"], quote["total"], pin_hours, repost_of))
     ad_id = cur.lastrowid
 
     # Деньги резервируем ДО отправки: списание атомарно, поэтому два параллельных
@@ -269,6 +330,121 @@ async def _publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=No
                             event=f"объявление #{ad_id} ({ad_type_tag or '-'})")
     return {"ad_id": ad_id, "message_id": sent.message_id,
             "cost": quote["total"], "balance": new_balance, "channel_id": channel_id}
+
+
+# ------------------------------------------------------------------ «Мои объявления»
+async def user_ads(user_id: int, limit: int = 8, offset: int = 0) -> list:
+    return await db.fetchall(
+        "SELECT * FROM ads WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+        (user_id, limit, offset))
+
+
+async def user_ads_count(user_id: int) -> int:
+    return int(await db.scalar("SELECT COUNT(*) FROM ads WHERE user_id = ?", (user_id,), 0))
+
+
+def ad_is_active(ad) -> bool:
+    return ad["status"] == "published" and bool(ad["channel_message_id"])
+
+
+def ad_pin_active(ad) -> bool:
+    """У объявления есть действующий закреп."""
+    if not ad["pinned_until"] or ad["unpinned"]:
+        return False
+    until = db.parse_iso(ad["pinned_until"])
+    return bool(until and until > db.utcnow())
+
+
+async def ad_link(bot: Bot, ad) -> Optional[str]:
+    """Ссылка на пост в канале (только для публичного канала)."""
+    if not ad_is_active(ad):
+        return None
+    username = await db.get_setting("ad_channel_username")
+    if not username:
+        try:
+            chat = await bot.get_chat(ad["channel_id"])
+            username = chat.username
+        except TelegramAPIError:
+            username = None
+    return f"https://t.me/{username}/{ad['channel_message_id']}" if username else None
+
+
+async def repost_ad(bot: Bot, user, ad_id: int) -> dict[str, Any]:
+    """«Продлить»: публикует объявление заново тем же текстом и рубрикой по текущей цене.
+
+    Если старый пост ещё висит в канале, он снимается (иначе в канале будет дубль),
+    коины за него не возвращаются — это не удаление, а замена. Работает и для старых,
+    уже удалённых объявлений. Дубли (ad_dup_hours) проверяются как при обычной публикации.
+    """
+    ad = await db.fetchone("SELECT * FROM ads WHERE id = ? AND user_id = ?", (ad_id, user.id))
+    if ad is None:
+        raise AdError("Объявление не найдено.")
+    # Рубрика/вертикаль берутся из самого объявления: справочник мог измениться,
+    # а «продлить» должно повторить именно то, что было.
+    ad_type_row = ({"id": ad["ad_type_id"], "name": ad["ad_type_name"], "tag": ad["ad_type_tag"]}
+                   if ad["ad_type_tag"] or ad["ad_type_name"] else None)
+    vertical_row = ({"id": ad["vertical_id"], "name": ad["vertical_name"], "tag": ad["vertical_tag"]}
+                    if ad["vertical_tag"] or ad["vertical_name"] else None)
+    res = await publish_ad(bot, user, text=ad["text"] or "", ad_type_row=ad_type_row,
+                           vertical_row=vertical_row, media_type=ad["media_type"] or "text",
+                           media_file_id=ad["media_file_id"], socials=ad["socials"],
+                           repost_of=ad_id)
+    if ad_is_active(ad):
+        claim = await db.execute(
+            """UPDATE ads SET status = 'deleted', delete_kind = 'reposted', deleted_by = ?,
+                              deleted_at = datetime('now'), unpinned = 1
+               WHERE id = ? AND status = 'published'""", (user.id, ad_id))
+        if claim.rowcount:
+            try:
+                if ad_pin_active(ad):
+                    await bot.unpin_chat_message(ad["channel_id"], ad["channel_message_id"])
+                await bot.delete_message(ad["channel_id"], ad["channel_message_id"])
+            except TelegramAPIError as exc:
+                log.warning("Не удалось снять старый пост %s при продлении: %s", ad_id, exc)
+            await site_db.mark_deleted(ad["channel_id"], ad["channel_message_id"])
+    await action_log.action(ad["channel_id"] or 0, user.id, user.username, ad["text"] or "",
+                            event=f"объявление #{res['ad_id']} — продление #{ad_id}")
+    return res
+
+
+async def add_pin(bot: Bot, user, ad_id: int, hours: int) -> dict[str, Any]:
+    """Докупить закреп к уже опубликованному объявлению. -> {"cost", "balance", "pinned_until"}."""
+    if hours not in PIN_OPTIONS or not hours:
+        raise AdError("Такого варианта закрепа нет.")
+    async with locks.named("ad_pin"):
+        ad = await db.fetchone("SELECT * FROM ads WHERE id = ? AND user_id = ?", (ad_id, user.id))
+        if ad is None or not ad_is_active(ad):
+            raise AdError("Объявление уже не опубликовано — закрепить нечего. "
+                          "Можно продлить его: оно выйдет заново.")
+        if ad_pin_active(ad):
+            until = db.parse_iso(ad["pinned_until"])
+            raise AdError(f"У этого объявления уже есть закреп до {pin_until_text(until)}.")
+        busy = await pin_busy_text(user)
+        if busy:
+            raise PinBusyError(busy)
+        price = max(0, await db.get_int(f"price_pin_{hours}h"))
+        if price and not await tokens.charge(user.id, price, "ad_pin",
+                                             {"ad_id": ad_id, "pin_hours": hours}):
+            raise AdError(f"Не хватает коинов: нужно {price}, "
+                          f"на балансе {await tokens.balance(user.id)}.")
+        try:
+            await bot.pin_chat_message(ad["channel_id"], ad["channel_message_id"],
+                                       disable_notification=True)
+        except TelegramAPIError as exc:
+            if price:
+                await tokens.add(user.id, price, "ad_pin_refund", {"ad_id": ad_id})
+            log.warning("Закреп объявления %s не удался: %s", ad_id, exc)
+            raise AdError("Не удалось закрепить. Проверьте, что бот — администратор канала.")
+        pinned_until = db.iso(db.utcnow() + timedelta(hours=hours))
+        await db.execute(
+            """UPDATE ads SET pinned_until = ?, unpinned = 0, pin_hours = ?, cost_pin = cost_pin + ?,
+                              cost_total = cost_total + ? WHERE id = ?""",
+            (pinned_until, hours, price, price, ad_id))
+        await site_db.set_pinned_until(ad["channel_id"], ad["channel_message_id"], pinned_until)
+    await action_log.action(ad["channel_id"] or 0, user.id, user.username, "",
+                            event=f"объявление #{ad_id} — закреп {hours} ч докуплен")
+    return {"cost": price, "balance": await tokens.balance(user.id),
+            "pinned_until": pinned_until, "pin_hours": hours}
 
 
 # ------------------------------------------------------------------ удаление

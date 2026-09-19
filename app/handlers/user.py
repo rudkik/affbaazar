@@ -21,7 +21,8 @@ router.message.filter(F.chat.type == ChatType.PRIVATE)
 MENU_BUTTONS = {"💰 Баланс", "💎 Купить коины", "💎 Купить токены", keyboards.BTN_REFERRAL,
                 "📊 Мой профиль", "📢 Создать объявление", "📜 Правила", "📢 Канал и цены",
                 "📋 Чаты", "⚙️ Глобальные настройки", "💰 Выдать токены", "💰 Выдать коины", "📊 Статистика",
-                "🌐 Веб-панель", "🏠 Меню пользователя", keyboards.BTN_CHANNEL, keyboards.BTN_SITE}
+                "🌐 Веб-панель", "🏠 Меню пользователя", keyboards.BTN_CHANNEL, keyboards.BTN_SITE,
+                keyboards.BTN_MY_ADS, keyboards.BTN_SUPPORT}
 
 
 def is_menu_button(text: Optional[str]) -> bool:
@@ -176,6 +177,18 @@ async def cmd_ref(message: Message, bot: Bot) -> None:
 async def cmd_site(message: Message) -> None:
     await message.answer(await texts.t("txt_site", message.from_user, url=f"{PUBLIC_URL}/"),
                          reply_markup=keyboards.links_kb(None, f"{PUBLIC_URL}/"))
+
+
+@router.message(Command("support"))
+@router.message(F.text == keyboards.BTN_SUPPORT)
+async def btn_support(message: Message) -> None:
+    """Кнопка «Поддержка»: ссылка на бот поддержки (настройка support_link)."""
+    link = (await db.get_setting("support_link")).strip()
+    if not link:
+        await message.answer(await texts.t("txt_channel_none", message.from_user))
+        return
+    await message.answer(await texts.t("txt_support", message.from_user),
+                         reply_markup=keyboards.support_kb(link))
 
 
 @router.message(F.text == keyboards.BTN_CHANNEL)

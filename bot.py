@@ -12,7 +12,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButtonDefault
 
 from app import config, db, site_db
-from app.handlers import admin, chat_guard, members, moderation, payments, post, user
+from app import support
+from app.handlers import admin, chat_guard, members, moderation, myads, payments, post, user
 from app.web.server import app as web_app
 from app.web.server import set_bot
 
@@ -22,7 +23,9 @@ USER_COMMANDS = [
     BotCommand(command="start", description="Запустить бота"),
     BotCommand(command="balance", description="Баланс коинов"),
     BotCommand(command="buy", description="Купить коины"),
+    BotCommand(command="myads", description="Мои объявления"),
     BotCommand(command="ref", description="Пригласить друга"),
+    BotCommand(command="support", description="Поддержка"),
     BotCommand(command="site", description="Лента сообщений на сайте"),
 ]
 
@@ -81,6 +84,7 @@ async def main() -> None:
     dp.include_router(admin.router)
     dp.include_router(moderation.router)
     dp.include_router(post.router)
+    dp.include_router(myads.router)
     dp.include_router(payments.router)
     dp.include_router(user.router)
     dp.include_router(chat_guard.router)
@@ -104,6 +108,7 @@ async def main() -> None:
 
     web_task = asyncio.create_task(run_web(bot))
     pin_task = asyncio.create_task(pin_watcher(bot))
+    support_task = asyncio.create_task(support.run())     # бот поддержки, если задан токен
     log.info("Веб-сервер: http://%s:%s (лента) и /admin", config.WEB_HOST, config.WEB_PORT)
 
     try:
@@ -118,6 +123,7 @@ async def main() -> None:
     finally:
         web_task.cancel()
         pin_task.cancel()
+        support_task.cancel()
         await bot.session.close()
         await db.close()
         await site_db.close()
