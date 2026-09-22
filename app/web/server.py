@@ -396,6 +396,8 @@ async def admin_users(q: str = "", limit: int = 50, offset: int = 0,
     # NULL в delete_kind — старые строки, их всегда удалял модератор (см. db.user_violations).
     rows = await db.fetchall(
         f"""SELECT u.*, (SELECT COUNT(*) FROM users r2 WHERE r2.referrer_id = u.user_id) AS invited,
+                   (SELECT COUNT(*) FROM users r3
+                     WHERE r3.referrer_id = u.user_id AND r3.activated = 1) AS invited_activated,
                    (SELECT COUNT(*) FROM ads d
                      WHERE d.user_id = u.user_id AND d.status = 'deleted') AS deleted_total,
                    (SELECT COUNT(*) FROM ads d

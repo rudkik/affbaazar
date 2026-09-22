@@ -307,7 +307,7 @@
     <span class="muted" id="u-total"></span>
   </div>
   <div class="table-wrap"><table><thead><tr><th>ID</th><th>Юзернейм</th><th>Имя</th><th>Токены</th><th>Сообщений</th>
-    <th>Приглашено</th><th>Удалений (нарушений)</th><th>Активирован</th><th>Начислить</th></tr></thead>
+    <th>Приглашено (активировались)</th><th>Удалений (нарушений)</th><th>Активирован</th><th>Начислить</th></tr></thead>
     <tbody id="u-body"></tbody></table></div>
 </section>
 
@@ -406,7 +406,7 @@ async function loadUsers(){
   $('#u-body').innerHTML = d.items.map(u => `<tr>
     <td>${u.user_id}</td><td>${u.username ? '@'+esc(u.username) : '—'}</td>
     <td>${esc(u.full_name || '')}</td><td><b>${u.tokens}</b></td><td>${u.messages_sent}</td>
-    <td>${u.invited}</td>
+    <td>${u.invited} <span class="muted">(${u.invited_activated ?? 0})</span></td>
     <td>${u.deleted_total ? `${u.deleted_total} (${u.deleted_by_moderator})` : '<span class="muted">0</span>'}</td>
     <td><span class="pill ${u.activated?'ok':'bad'}">${u.activated?'да':'нет'}</span></td>
     <td style="white-space:nowrap">

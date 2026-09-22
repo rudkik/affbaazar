@@ -301,10 +301,19 @@ async def test_web_api():
         me = me[0]
         for field in ("first_name", "last_name", "bio", "started", "started_at",
                       "subscribed", "first_subscribed_at", "last_seen_at",
-                      "referrer_username", "referrer_db_id", "invited"):
+                      "referrer_username", "referrer_db_id", "invited", "invited_activated"):
             assert field in me, (field, sorted(me))
         assert me["referrer_username"] == "referrer_nick", me
-        print("GET /admin/api/users OK: новые поля и реферер в выдаче")
+        # столбец «Приглашено (активировались)»: у реферера один приглашённый, активированных —
+        # столько, сколько из них activated = 1 (AffBazaar-28)
+        ref = [u for u in (await c.get("/admin/api/users", params={"q": "referrer_nick"})).json()["items"]
+               if u["username"] == "referrer_nick"][0]
+        assert ref["invited"] >= 1 and 0 <= ref["invited_activated"] <= ref["invited"], ref
+        await db.execute("UPDATE users SET activated = 1 WHERE user_id = ?", (A,))
+        ref2 = [u for u in (await c.get("/admin/api/users", params={"q": "referrer_nick"})).json()["items"]
+                if u["username"] == "referrer_nick"][0]
+        assert ref2["invited_activated"] == ref["invited_activated"] + 1, (ref, ref2)
+        print("GET /admin/api/users OK: новые поля, реферер и активировавшиеся приглашённые")
 
         r = await c.get(f"/admin/api/users/{A}/card")
         card = r.json()
