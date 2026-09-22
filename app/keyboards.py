@@ -50,14 +50,14 @@ async def main_menu(bonus: Optional[int] = None) -> ReplyKeyboardMarkup:
     # Mini App пока убрана (кнопка web_app и Menu Button): вместо неё две ссылки — канал и сайт.
     if bonus is None:
         bonus = await db.get_int("referral_bonus")
+    # Все ряды в два столбца (AffBazaar-27), порядок — как в макете задачи.
     last = [KeyboardButton(text="📜 Правила")]
     if (await db.get_setting("support_link")).strip():
         last.append(KeyboardButton(text=BTN_SUPPORT))
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_CHANNEL_SITE)],
-            [KeyboardButton(text="📢 Создать объявление"), KeyboardButton(text=BTN_MY_ADS)],
-            [KeyboardButton(text=BTN_BALANCE_BUY)],
+            [KeyboardButton(text=BTN_CHANNEL_SITE), KeyboardButton(text=BTN_MY_ADS)],
+            [KeyboardButton(text=BTN_BALANCE_BUY), KeyboardButton(text="📢 Создать объявление")],
             [KeyboardButton(text=referral_btn(bonus)), KeyboardButton(text="📊 Мой профиль")],
             last,
         ],

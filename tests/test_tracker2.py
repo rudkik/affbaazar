@@ -302,6 +302,12 @@ async def main():
     assert "📣 Канал и сайт Aff Bazaar" in labels and "💰 Баланс / Купить коины" in labels, labels
     for old in ("📣 Канал Aff Bazaar", "🌐 Наш сайт", "💰 Баланс", "💎 Купить коины"):
         assert old not in labels, f"старая кнопка {old} осталась в меню"
+    # два столбца в каждом ряду (AffBazaar-27), порядок из макета
+    rows = [[b.text for b in row] for row in kb.keyboard]
+    assert all(len(r) == 2 for r in rows), rows
+    assert rows[0] == ["📣 Канал и сайт Aff Bazaar", "📋 Мои объявления"], rows[0]
+    assert rows[1] == ["💰 Баланс / Купить коины", "📢 Создать объявление"], rows[1]
+    assert rows[3] == ["📜 Правила", "🆘 Поддержка"], rows[3]
     # баланс: текст + пакеты коинов под ним
     await dp.feed_update(bot, priv("💰 Баланс / Купить коины"))
     assert "Баланс: <b>" in bot.to(UID)[-1] and "Пополнить баланс" in bot.to(UID)[-1], bot.to(UID)[-1]
