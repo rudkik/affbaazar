@@ -279,7 +279,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "price_pin_4h":     "15",     # доплата за закреп на 4 часа
     "price_pin_8h":     "25",     # доплата за закреп на 8 часов
     "ad_dup_hours":     "1",      # часов, в течение которых нельзя повторить то же объявление (0 = выкл)
-    "support_link":     "https://t.me/aff_bazzar_support_bot",   # кнопка «Поддержка» (пусто = скрыта)
+    "support_link":     "https://t.me/aff_bazaar_support_bot",   # кнопка «Поддержка» (пусто = скрыта)
     "rules_version":    "1",      # смена версии заставит принять правила заново
     "rules_text":       RULES_TEXT_DEFAULT,
     "intro_note":       "В этой рубрике можно рассказать о себе и оставить свои соцсети, "

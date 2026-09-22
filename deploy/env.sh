@@ -39,7 +39,7 @@ SECRET_KEY=${SECRET}
 PUBLIC_URL=https://${DOMAIN}
 WEBAPP_URL=https://${DOMAIN}
 
-# --- Бот поддержки (@aff_bazzar_support_bot): токен и id форум-группы с топиками ---
+# --- Бот поддержки (@aff_bazaar_support_bot): токен и id форум-группы с топиками ---
 SUPPORT_BOT_TOKEN=
 SUPPORT_CHAT_ID=
 

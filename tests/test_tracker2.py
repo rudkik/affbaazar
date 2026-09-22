@@ -252,7 +252,7 @@ async def main():
     await db.set_setting("support_link", "")
     kb = await keyboards.main_menu()
     assert "🆘 Поддержка" not in [b.text for row in kb.keyboard for b in row], "без ссылки кнопки нет"
-    await db.set_setting("support_link", "https://t.me/aff_bazzar_support_bot")
+    await db.set_setting("support_link", "https://t.me/aff_bazaar_support_bot")
 
     # сам бот поддержки: отдельный диспетчер
     sdp = support.build_dispatcher()

@@ -9,7 +9,7 @@ load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-# Бот поддержки (@aff_bazzar_support_bot): отдельный токен и форум-группа с топиками,
+# Бот поддержки (@aff_bazaar_support_bot): отдельный токен и форум-группа с топиками,
 # куда попадают обращения. Пусто = бот поддержки не запускается (app/support.py).
 SUPPORT_BOT_TOKEN = os.getenv("SUPPORT_BOT_TOKEN", "").strip()
 
