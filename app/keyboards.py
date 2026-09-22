@@ -30,6 +30,11 @@ def topup_kb(bot_username: str) -> InlineKeyboardMarkup:
 
 BTN_CHANNEL = "📣 Канал Aff Bazaar"
 BTN_SITE = "🌐 Наш сайт"
+# Объединённые разделы (AffBazaar-23): одна кнопка вместо двух. Старые подписи (BTN_CHANNEL,
+# BTN_SITE, «💰 Баланс», «💎 Купить коины») остаются в обработчиках — они ещё живут в клавиатурах
+# пользователей, которые не нажимали /start после обновления.
+BTN_CHANNEL_SITE = "📣 Канал и сайт Aff Bazaar"
+BTN_BALANCE_BUY = "💰 Баланс / Купить коины"
 BTN_MY_ADS = "📋 Мои объявления"
 BTN_SUPPORT = "🆘 Поддержка"
 # Кнопка рефералов подписывается текущим бонусом, поэтому сравнивать её текст
@@ -50,9 +55,9 @@ async def main_menu(bonus: Optional[int] = None) -> ReplyKeyboardMarkup:
         last.append(KeyboardButton(text=BTN_SUPPORT))
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_CHANNEL), KeyboardButton(text=BTN_SITE)],
+            [KeyboardButton(text=BTN_CHANNEL_SITE)],
             [KeyboardButton(text="📢 Создать объявление"), KeyboardButton(text=BTN_MY_ADS)],
-            [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="💎 Купить коины")],
+            [KeyboardButton(text=BTN_BALANCE_BUY)],
             [KeyboardButton(text=referral_btn(bonus)), KeyboardButton(text="📊 Мой профиль")],
             last,
         ],

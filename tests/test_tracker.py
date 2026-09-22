@@ -119,8 +119,10 @@ async def main():
     # ================= 14. цена одна =======================================================
     assert "message_cost" not in db.DEFAULT_SETTINGS and "token_packages" not in db.DEFAULT_SETTINGS
     await db.set_setting("price_post", 7)
-    await dp.feed_update(bot, priv("💰 Баланс", 101))
+    await dp.feed_update(bot, priv("💰 Баланс / Купить коины", 101))
     assert "Стоимость объявления: <b>7</b>" in bot.to(101)[-1], bot.to(101)
+    await dp.feed_update(bot, priv("💰 Баланс", 101))     # старая подпись тоже работает
+    assert "Стоимость объявления: <b>7</b>" in bot.to(101)[-1]
     assert "одного сообщения" not in bot.to(101)[-1]
     await db.set_setting("price_post", 10)
     print("14 OK: одна настройка цены, в «Балансе» — цена объявления")

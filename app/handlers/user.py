@@ -19,6 +19,7 @@ router = Router(name="user")
 router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 MENU_BUTTONS = {"💰 Баланс", "💎 Купить коины", "💎 Купить токены", keyboards.BTN_REFERRAL,
+                keyboards.BTN_CHANNEL_SITE, keyboards.BTN_BALANCE_BUY,
                 "📊 Мой профиль", "📢 Создать объявление", "📜 Правила", "📢 Канал и цены",
                 "📋 Чаты", "⚙️ Глобальные настройки", "💰 Выдать токены", "💰 Выдать коины", "📊 Статистика",
                 "🌐 Веб-панель", "🏠 Меню пользователя", keyboards.BTN_CHANNEL, keyboards.BTN_SITE,
@@ -106,11 +107,14 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
         await show_packages(message)
 
 
-@router.message(F.text == "💰 Баланс")
+@router.message(F.text.in_({keyboards.BTN_BALANCE_BUY, "💰 Баланс"}))
 async def show_balance(message: Message) -> None:
+    """Баланс и сразу под ним пакеты коинов (AffBazaar-22/23): один раздел вместо двух."""
+    from app.config import cryptopay_enabled
     balance = await tokens.balance(message.from_user.id)
+    kb = await keyboards.packages_kb() if cryptopay_enabled() else None
     await message.answer(await texts.t("txt_balance", message.from_user, balance=balance,
-                                       price=await db.get_int("price_post")))
+                                       price=await db.get_int("price_post")), reply_markup=kb)
 
 
 @router.message(F.text == "📊 Мой профиль")
@@ -189,6 +193,20 @@ async def btn_support(message: Message) -> None:
         return
     await message.answer(await texts.t("txt_support", message.from_user),
                          reply_markup=keyboards.support_kb(link))
+
+
+@router.message(F.text == keyboards.BTN_CHANNEL_SITE)
+async def btn_channel_site(message: Message, bot: Bot) -> None:
+    """Канал и сайт одним сообщением с двумя кнопками-ссылками (AffBazaar-23)."""
+    link = await subscription.ad_channel_link(bot)
+    site = f"{PUBLIC_URL}/"
+    if not link:
+        await cmd_site(message)
+        return
+    title = await db.get_setting("ad_channel_title") or "Aff Bazaar"
+    await message.answer(await texts.t("txt_channel_site", message.from_user,
+                                       title=html.escape(title), url=link, site=site),
+                         reply_markup=keyboards.links_kb(link, site))
 
 
 @router.message(F.text == keyboards.BTN_CHANNEL)

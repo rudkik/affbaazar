@@ -1,8 +1,10 @@
-"""Задачи трекера AffBazaar-18…20.
+"""Задачи трекера AffBazaar-18…20, 22, 23.
 
 18 — бот поддержки: топик на пользователя в форум-группе, ответы из топика, /ban, кнопка в главном боте
 19 — запрет дублей: то же объявление нельзя повторить раньше ad_dup_hours, бот говорит через сколько
 20 — «Мои объявления»: список, карточка, продлить (повторная публикация), докупить закреп
+22 — под балансом сразу кнопки покупки коинов
+23 — объединённые кнопки меню: «Канал и сайт Aff Bazaar», «Баланс / Купить коины»
 """
 import asyncio, itertools, os, pathlib, sys, tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -32,7 +34,7 @@ class FakeBot:
 
     def __init__(self):
         self.dm, self.channel, self.alerts, self.pinned, self.deleted, self.edits = [], [], [], [], [], []
-        self.topics, self.copied, self.group = [], [], []
+        self.topics, self.copied, self.group, self.markups = [], [], [], []
         self.copy_fail = None
 
     async def get_me(self):
@@ -82,6 +84,7 @@ class FakeBot:
     async def __call__(self, method, request_timeout=None):
         name = type(method).__name__
         if name == "SendMessage":
+            self.markups.append(method.reply_markup)
             return await self.send_message(method.chat_id, method.text,
                                            message_thread_id=getattr(method, "message_thread_id", None))
         if name == "AnswerCallbackQuery":
@@ -291,6 +294,33 @@ async def main():
     cfg.SUPPORT_BOT_TOKEN = ""
     await asyncio.wait_for(support.run(), 2)
     print("18 OK: топик на пользователя, ответы из топика, пересоздание топика, /ban и /unban, кнопка")
+
+    # ================= 22 + 23. объединённые разделы ======================================
+    cfg.CRYPTOPAY_API_KEY = "cp_test_key"
+    kb = await keyboards.main_menu()
+    labels = [b.text for row in kb.keyboard for b in row]
+    assert "📣 Канал и сайт Aff Bazaar" in labels and "💰 Баланс / Купить коины" in labels, labels
+    for old in ("📣 Канал Aff Bazaar", "🌐 Наш сайт", "💰 Баланс", "💎 Купить коины"):
+        assert old not in labels, f"старая кнопка {old} осталась в меню"
+    # баланс: текст + пакеты коинов под ним
+    await dp.feed_update(bot, priv("💰 Баланс / Купить коины"))
+    assert "Баланс: <b>" in bot.to(UID)[-1] and "Пополнить баланс" in bot.to(UID)[-1], bot.to(UID)[-1]
+    packs = buttons(bot.markups[-1])
+    assert packs and all(d.startswith("cbuy:") for _, d in packs), packs
+    # старые подписи из клавиатур до обновления работают так же
+    await dp.feed_update(bot, priv("💰 Баланс"))
+    assert buttons(bot.markups[-1]) == packs
+    await dp.feed_update(bot, priv("💎 Купить коины"))
+    assert buttons(bot.markups[-1]) == packs
+    # канал и сайт: одно сообщение с двумя ссылками
+    await dp.feed_update(bot, priv("📣 Канал и сайт Aff Bazaar"))
+    text = bot.to(UID)[-1]
+    assert "https://t.me/adschannel" in text and "Сайт:" in text, text
+    urls = [b.url for row in bot.markups[-1].inline_keyboard for b in row]
+    assert urls == ["https://t.me/adschannel", f"{cfg.PUBLIC_URL}/"], urls
+    await dp.feed_update(bot, priv("🌐 Наш сайт"))
+    assert cfg.PUBLIC_URL in bot.to(UID)[-1]
+    print("22/23 OK: пакеты под балансом, объединённые кнопки, старые подписи живы")
 
     await db.close(); await sdb.close()
     print("TRACKER2 OK")
