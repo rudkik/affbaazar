@@ -109,9 +109,36 @@ async def get_invoice(invoice_id: str) -> dict:
 
 
 # ------------------------------------------------------------------ пополнение
+async def cancel_stale(user_id: int) -> int:
+    """Отменяет прежние неоплаченные счета пользователя перед выставлением нового.
+
+    Иначе старый счёт, о котором пользователь уже забыл, через час истекает, и бот присылает
+    «срок оплаты истёк» сразу после «оплата получена» по новому. Отменяем только `pending`:
+    у `confirming` деньги уже в пути, его трогать нельзя. Ошибка API не мешает выставить
+    новый счёт — тогда старый просто истечёт молча (см. _apply_locked).
+    """
+    rows = await db.fetchall(
+        "SELECT id, invoice_id FROM crypto_topups WHERE user_id = ? AND status = 'pending'",
+        (user_id,))
+    done = 0
+    for row in rows:
+        if row["invoice_id"]:
+            try:
+                await request("POST", f"/invoices/{row['invoice_id']}/cancel")
+            except CryptoPayError as exc:
+                log.info("cryptopay: старый счёт %s не отменён (%s), истечёт сам",
+                         row["invoice_id"], exc)
+        await db.execute("UPDATE crypto_topups SET status = 'cancelled', "
+                         "updated_at = datetime('now') WHERE id = ? AND status = 'pending'",
+                         (row["id"],))
+        done += 1
+    return done
+
+
 async def create_topup(user_id: int, package: dict, *, success_url: str = "") -> dict:
     """Создаёт запись пополнения и счёт в CryptoPay. Возвращает строку crypto_topups."""
     amount, tok = fmt_amount(package["usd"]), int(package["tokens"])
+    await cancel_stale(user_id)
     cur = await db.execute(
         "INSERT INTO crypto_topups(user_id, amount, tokens) VALUES (?, ?, ?)",
         (user_id, amount, tok))
@@ -277,7 +304,13 @@ async def _apply_locked(invoice: dict, reversal: Optional[dict]) -> dict:
         if topup["status"] != status:
             await db.execute("UPDATE crypto_topups SET status = ?, updated_at = datetime('now') "
                              "WHERE id = ?", (status, topup_id))
-            return {"action": "status", "topup": await get_topup(topup_id), "status": status}
+            # «Истёк»/«отменён» сообщаем только по последнему счёту пользователя: если после
+            # этого он выставил (и, возможно, оплатил) другой, старый истёк — не новость.
+            quiet = status != "confirming" and bool(await db.fetchone(
+                "SELECT 1 FROM crypto_topups WHERE user_id = ? AND id > ? LIMIT 1",
+                (int(topup["user_id"]), topup_id)))
+            return {"action": "status", "topup": await get_topup(topup_id), "status": status,
+                    "quiet": quiet}
     return {"action": "noop", "topup": topup}
 
 
@@ -285,6 +318,8 @@ async def describe(result: dict) -> Optional[str]:
     """Текст для пользователя по результату apply_*; None — сообщать нечего.
     Сами тексты редактируются в админке сайта (app/texts.py)."""
     action = result.get("action")
+    if result.get("quiet"):
+        return None
     if action == "credited":
         key = "txt_crypto_paid_partial" if result.get("partial") else "txt_crypto_paid"
         return await texts.t(key, tokens=result["tokens"], balance=result["balance"])

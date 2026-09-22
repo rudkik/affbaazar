@@ -39,6 +39,11 @@ async def fake_request(method, path, payload=None, headers=None):
             "customer_id": payload["customer_id"], "metadata": payload.get("metadata"),
             "expires_at": "2026-09-09T12:00:00+00:00"}
         return INVOICES[inv_id]
+    if method == "POST" and path.endswith("/cancel"):
+        inv = INVOICES.get(path.split("/")[-2])
+        if inv and inv["status"] == "pending":
+            inv["status"] = "cancelled"
+        return inv or {}
     if method == "GET" and path.startswith("/invoices/"):
         inv = INVOICES.get(path.split("/")[-1])
         if not inv:
@@ -212,6 +217,8 @@ async def main():
     # --- параллельные вебхуки по одному счёту (второй счёт): зачисление ровно одно
     await feed(cb("cbuy:1"))
     inv2 = INVOICES["inv-2"]
+    assert not any(c[0] == "POST" and c[1].endswith("/cancel") for c in API_CALLS), \
+        "оплаченный первый счёт при выставлении второго не отменяется"
     paid2 = {**inv2, "status": "overpaid", "is_paid": True, "amount_confirmed": "12.000000",
              "currency": "USDC", "network": "bsc"}
     reqs = [signed(event("invoice.overpaid", paid2, f"d-par-{i}")) for i in range(5)]
@@ -280,6 +287,35 @@ async def main():
     assert "Не удалось выставить счёт" in bot.alerts[-1]
     assert (await cp.get_topup(6))["status"] == "cancelled"
     cp.request = fake_request
+
+    # --- забытый счёт: выставил, не оплатил, выставил новый и оплатил его. Старый
+    # отменяется в процессинге сразу, а если он всё же истечёт — пользователю об этом не пишем
+    await feed(cb("cbuy:0"))                      # topup 7, inv-7 — забыт
+    old = await db.fetchone("SELECT * FROM crypto_topups WHERE user_id = ? ORDER BY id DESC", (UID,))
+    await feed(cb("cbuy:1"))                      # topup 8, inv-8 — оплачивается
+    assert (await cp.get_topup(old["id"]))["status"] == "cancelled", "старый pending отменён локально"
+    assert INVOICES[old["invoice_id"]]["status"] == "cancelled", "и в процессинге"
+    new = await db.fetchone("SELECT * FROM crypto_topups WHERE user_id = ? ORDER BY id DESC", (UID,))
+    paid_new = {**INVOICES[new["invoice_id"]], "status": "paid", "is_paid": True,
+                "amount_confirmed": "10.000000", "currency": "USDT", "network": "tron"}
+    balance_before = await tk.balance(UID)
+    await hook(*signed(event("invoice.paid", paid_new, "d-old-1")))
+    assert await tk.balance(UID) == balance_before + 120
+    n = len(bot.dm)
+    # процессинг всё же прислал «истёк» по старому (например, отмена не прошла) — тишина
+    expired_old = {**INVOICES[old["invoice_id"]], "status": "expired"}
+    await db.execute("UPDATE crypto_topups SET status = 'pending' WHERE id = ?", (old["id"],))
+    r = await hook(*signed(event("invoice.expired", expired_old, "d-old-2")))
+    assert r.json()["action"] == "status"
+    assert (await cp.get_topup(old["id"]))["status"] == "expired"
+    assert len(bot.dm) == n, f"лишнее сообщение: {bot.dm[n:]}"
+    # а по последнему счёту «истёк» по-прежнему сообщается
+    await feed(cb("cbuy:0"))
+    last = await db.fetchone("SELECT * FROM crypto_topups WHERE user_id = ? ORDER BY id DESC", (UID,))
+    expired_last = {**INVOICES[last["invoice_id"]], "status": "expired"}
+    await hook(*signed(event("invoice.expired", expired_last, "d-old-3")))
+    assert "истёк" in bot.dm[-1][1], bot.dm[-1]
+    print("забытый счёт: отменён при новом, истечение старого не беспокоит OK")
 
     # --- без ключа пакетов нет: вместо них заглушка «временно недоступна»
     cfg.CRYPTOPAY_API_KEY = ""
