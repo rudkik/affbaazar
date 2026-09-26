@@ -43,6 +43,12 @@ WEBAPP_URL=https://${DOMAIN}
 SUPPORT_BOT_TOKEN=
 SUPPORT_CHAT_ID=
 
+# --- Бонус-Лото: ключи из админки лото, вебхук https://${DOMAIN}/webhooks/loto ---
+LOTO_URL=
+LOTO_PUBLIC_KEY=
+LOTO_SECRET=
+LOTO_COINS_PER_USD=10
+
 # --- Оплата криптой (USDT/USDC через CryptoPay, см. INTEGRATION.md) ---
 # Пусто = кнопки «Оплатить криптой» в боте нет. Ключ и секрет — из карточки сервиса в админке процессинга.
 # В карточку сервиса впишите вебхук: https://${DOMAIN}/webhooks/cryptopay

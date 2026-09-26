@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app import config, db, locks, texts, tokens
+from app import config, db, locks, loto, texts, tokens
 
 log = logging.getLogger(__name__)
 
@@ -266,6 +266,8 @@ async def _apply_locked(invoice: dict, reversal: Optional[dict]) -> dict:
             (back, topup_id))
         log.warning("cryptopay: реверс счёта %s, списано %s коинов у user=%s",
                     invoice["id"], back, topup["user_id"])
+        await loto.enqueue("order.refunded", f"topup-{topup_id}", int(topup["user_id"]),
+                           str(topup["amount_credited"] or amount))
         return {"action": "reversed", "topup": await get_topup(topup_id), "tokens": back}
 
     paid = bool(invoice.get("is_paid")) or status in PAID_STATUSES or status == "partially_paid"
@@ -297,6 +299,10 @@ async def _apply_locked(invoice: dict, reversal: Optional[dict]) -> dict:
                          "status": status}, ensure_ascii=False)))
         log.info("cryptopay: счёт %s оплачен (%s), начислено %s коинов user=%s",
                  invoice["id"], status, tok, topup["user_id"])
+        # Бонус-Лото: оплаченное пополнение → билет. Только в очередь, HTTP уйдёт фоном.
+        user = await db.get_user(int(topup["user_id"]))
+        await loto.enqueue("order.paid", f"topup-{topup_id}", int(topup["user_id"]),
+                           fmt_amount(confirmed), name=(user["username"] if user else None))
         return {"action": "credited", "topup": await get_topup(topup_id), "tokens": tok,
                 "balance": balance, "partial": new_status == "partial"}
 

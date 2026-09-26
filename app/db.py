@@ -169,6 +169,32 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Бонус-Лото: исходящие заказы (очередь с повторами) и обработанные входящие доставки.
+CREATE TABLE IF NOT EXISTS loto_orders (
+    order_id   TEXT PRIMARY KEY,                 -- topup-<id>; повтор с тем же id для лото безопасен
+    event      TEXT NOT NULL,                    -- order.paid | order.refunded (последнее состояние)
+    user_id    INTEGER NOT NULL,
+    amount     TEXT NOT NULL,                    -- USD строкой
+    name       TEXT,
+    status     TEXT DEFAULT 'pending',           -- pending | sent | failed
+    attempts   INTEGER DEFAULT 0,
+    next_at    INTEGER DEFAULT 0,                -- unix: раньше не слать
+    response   TEXT,                             -- JSON ответа лото (ticket_ids и т. п.)
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS loto_deliveries (
+    id         TEXT PRIMARY KEY,
+    event      TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS loto_prizes (         -- один билет = одно начисление
+    ticket_id  TEXT PRIMARY KEY,
+    delivery   TEXT,
+    coins      INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS ad_types (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL UNIQUE,

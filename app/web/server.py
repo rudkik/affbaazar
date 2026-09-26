@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import auth, cryptopay, db, site_db, texts
+from app import auth, cryptopay, db, keyboards, loto, site_db, texts
 from app.config import ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
 
 # На боевом домене (https) куки отдаём только по защищённому соединению.
@@ -267,6 +267,8 @@ async def _me_payload(user_id: int) -> dict:
         "ads": ads_total,
         "invited": invited,
         "is_admin": user_id in ADMINS,
+        # Бонус-Лото: виджет билетов на сайте (None — интеграция выключена)
+        "loto": loto.widget(user_id, row["username"] if row else None),
     }
 
 
@@ -573,6 +575,96 @@ async def admin_payments(limit: int = 50, _: bool = Depends(require_admin)):
         """SELECT p.*, u.username FROM payments p LEFT JOIN users u ON u.user_id = p.user_id
            ORDER BY p.id DESC LIMIT ?""", (min(limit, 200),))
     return [dict(r) for r in rows]
+
+
+# ------------------------------------------------------------------ вебхук Бонус-Лото
+@app.post("/webhooks/loto")
+async def loto_webhook(request: Request):
+    """События лото (prize.won, ticket.*, draw.*). Подпись по сырому телу, без сессии и CSRF."""
+    raw = await request.body()
+    if not loto.verify(request.headers.get("X-Loto-Timestamp", ""), raw,
+                       request.headers.get("X-Loto-Signature", "")):
+        log.warning("loto: вебхук с неверной подписью")
+        raise HTTPException(status_code=401, detail="bad signature")
+    try:
+        event = json.loads(raw)
+        assert isinstance(event, dict)
+    except (ValueError, AssertionError):
+        raise HTTPException(status_code=400, detail="bad json")
+    result = await loto.apply_event(event)
+    log.info("loto: вебхук %s → %s", event.get("event"), result.get("action"))
+    await _loto_notify(result)
+    return {"ok": True, "action": result.get("action")}
+
+
+async def _dm(user_id: int, text: str, kb=None) -> None:
+    if not BOT:
+        return
+    try:
+        await BOT.send_message(user_id, text, reply_markup=kb)
+    except Exception:  # noqa: BLE001
+        log.exception("loto: не удалось написать пользователю %s", user_id)
+
+
+async def _admins(text: str) -> None:
+    for admin_id in ADMINS:
+        await _dm(admin_id, text)
+
+
+async def _loto_notify(result: dict) -> None:
+    """Сообщения в Telegram по событию лото. Ошибки Telegram не влияют на ответ 200."""
+    action, data = result.get("action"), result.get("data") or {}
+    try:
+        user_id = int(data.get("customer_id"))
+    except (TypeError, ValueError):
+        user_id = None
+    user = await db.get_user(user_id) if user_id else None
+    who = f"@{user['username']}" if user and user["username"] else str(user_id)
+    name = user["username"] if user else None
+    ticket, draw = html.escape(str(data.get("ticket_id") or "")), html.escape(str(data.get("draw") or ""))
+
+    if action == "credited":
+        await _dm(user_id, await texts.t("txt_loto_prize", draw=draw, coins=result["coins"],
+                                         ticket=ticket, balance=result["balance"]))
+        await _admins(f"🏆 Бонус-Лото №{draw}: {who} выиграл {result['coins']} коинов "
+                      f"(билет {ticket}).")
+        return
+    if action == "manual":
+        prize = data.get("prize") or {}
+        desc = html.escape(f"{prize.get('type')} {prize.get('value') or ''} "
+                           f"{prize.get('currency') or ''}".strip())
+        if user_id:
+            await _dm(user_id, await texts.t("txt_loto_prize_manual", draw=draw, ticket=ticket,
+                                             prize=desc))
+        await _admins(f"🎁 Бонус-Лото №{draw}: {who} выиграл приз «{desc}» (билет {ticket}). "
+                      f"Выдайте вручную.")
+        return
+    if action != "noted" or not user_id:
+        return
+    kind = result.get("kind")
+    link = loto.sso_link(user_id, name)
+    if kind == "ticket.issued":
+        await _dm(user_id, await texts.t("txt_loto_ticket", draw=draw, tickets=ticket),
+                  keyboards.loto_kb(link))
+    elif kind == "ticket.reminder":
+        await _dm(user_id, await texts.t("txt_loto_reminder", ticket=ticket, draw=draw,
+                                         close_at=html.escape(str(data.get("close_at") or ""))),
+                  keyboards.loto_kb(link, "✍️ Заполнить билет"))
+    elif kind == "ticket.cancelled":
+        reason = data.get("reason")
+        await _dm(user_id, await texts.t("txt_loto_cancelled", ticket=ticket, draw=draw,
+                                         reason=f": {html.escape(str(reason))}" if reason else ""))
+
+
+async def loto_order_sent(row, response: dict) -> None:
+    """Заказ доставлен в лото: если выданы билеты — сказать пользователю (зовёт loto.worker)."""
+    tickets = response.get("ticket_ids") or []
+    if row["event"] != "order.paid" or not tickets:
+        return
+    user_id = int(row["user_id"])
+    await _dm(user_id, await texts.t("txt_loto_ticket", draw=html.escape(str(response.get("draw") or "")),
+                                     tickets=", ".join(html.escape(str(t)) for t in tickets)),
+              keyboards.loto_kb(loto.sso_link(user_id, row["name"]), "🎟 Открыть билет"))
 
 
 # ------------------------------------------------------------------ вебхук CryptoPay

@@ -1200,8 +1200,21 @@
     authbarEl.appendChild(wrap);
   }
 
+  function mountLotoWidget(loto){
+    // Бонус-Лото: виджет билетов для вошедшего пользователя (токен короткоживущий,
+    // приходит в /api/me при каждой загрузке). Повторно не вставляем.
+    if (!loto || !loto.url || document.querySelector('script[data-loto-widget]')) return;
+    var s = document.createElement('script');
+    s.setAttribute('data-loto-widget', '1'); s.async = true; s.src = loto.url;
+    s.setAttribute('data-key', loto.key);
+    s.setAttribute('data-token', loto.token);
+    s.setAttribute('data-theme', 'dark');
+    document.body.appendChild(s);
+  }
+
   function renderAuthUser(data){
     clearEl(authbarEl);
+    mountLotoWidget(data.loto);
     var label = data.username ? '@' + data.username : (data.name || 'без имени');
     var avatar = h('div', {
       class: 'u-avatar',

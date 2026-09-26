@@ -12,10 +12,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButtonDefault
 
 from app import config, db, site_db
-from app import support
+from app import loto, support
 from app.handlers import admin, chat_guard, members, moderation, myads, payments, post, user
 from app.web.server import app as web_app
-from app.web.server import set_bot
+from app.web.server import loto_order_sent, set_bot
 
 log = logging.getLogger("bot")
 
@@ -109,6 +109,7 @@ async def main() -> None:
     web_task = asyncio.create_task(run_web(bot))
     pin_task = asyncio.create_task(pin_watcher(bot))
     support_task = asyncio.create_task(support.run())     # бот поддержки, если задан токен
+    loto_task = asyncio.create_task(loto.worker(loto_order_sent))   # очередь заказов в лото
     log.info("Веб-сервер: http://%s:%s (лента) и /admin", config.WEB_HOST, config.WEB_PORT)
 
     try:
@@ -124,6 +125,7 @@ async def main() -> None:
         web_task.cancel()
         pin_task.cancel()
         support_task.cancel()
+        loto_task.cancel()
         await bot.session.close()
         await db.close()
         await site_db.close()

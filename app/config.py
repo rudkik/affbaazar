@@ -25,6 +25,21 @@ def _chat_id(raw: str) -> int:
 
 SUPPORT_CHAT_ID = _chat_id(os.getenv("SUPPORT_CHAT_ID", ""))
 
+# Бонус-Лото (см. loto/docs/INTEGRATION-AFFBAZAAR.md): оплаченные пополнения → билеты, выигрыш →
+# коины. Ключи выдаёт админка лото (Компании → AffBazaar → Интеграция). Пустой секрет или ключ =
+# интеграция выключена: ничего не отправляем и не показываем (как cryptopay_enabled()).
+LOTO_URL = (os.getenv("LOTO_URL") or "").strip().rstrip("/")
+LOTO_PUBLIC_KEY = os.getenv("LOTO_PUBLIC_KEY", "").strip()
+LOTO_SECRET = os.getenv("LOTO_SECRET", "").strip()
+try:
+    LOTO_COINS_PER_USD = int(os.getenv("LOTO_COINS_PER_USD") or 10)   # пакет 5$ → 50 коинов
+except ValueError:
+    LOTO_COINS_PER_USD = 10
+
+
+def loto_enabled() -> bool:
+    return bool(LOTO_URL and LOTO_SECRET and LOTO_PUBLIC_KEY)
+
 def _ids(raw: str) -> set[int]:
     out = set()
     for part in (raw or "").replace(";", ",").split(","):

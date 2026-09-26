@@ -5,7 +5,7 @@ from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, ReplyKeyboardMarkup)
 
 from app import db, subscription
-from app.config import cryptopay_enabled
+from app.config import cryptopay_enabled, loto_enabled
 
 
 async def subscribe_kb(missing: list, bot_username: str) -> InlineKeyboardMarkup:
@@ -37,6 +37,7 @@ BTN_CHANNEL_SITE = "📣 Канал и сайт Aff Bazaar"
 BTN_BALANCE_BUY = "💰 Баланс / Купить коины"
 BTN_MY_ADS = "📋 Мои объявления"
 BTN_SUPPORT = "🆘 Поддержка"
+BTN_LOTO = "🎟 Бонус-Лото"
 # Кнопка рефералов подписывается текущим бонусом, поэтому сравнивать её текст
 # можно только по префиксу — см. user.is_menu_button().
 BTN_REFERRAL = "👥 Пригласить друга"
@@ -54,15 +55,19 @@ async def main_menu(bonus: Optional[int] = None) -> ReplyKeyboardMarkup:
     last = [KeyboardButton(text="📜 Правила")]
     if (await db.get_setting("support_link")).strip():
         last.append(KeyboardButton(text=BTN_SUPPORT))
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_CHANNEL_SITE), KeyboardButton(text=BTN_MY_ADS)],
-            [KeyboardButton(text=BTN_BALANCE_BUY), KeyboardButton(text="📢 Создать объявление")],
-            [KeyboardButton(text=referral_btn(bonus)), KeyboardButton(text="📊 Мой профиль")],
-            last,
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        [KeyboardButton(text=BTN_CHANNEL_SITE), KeyboardButton(text=BTN_MY_ADS)],
+        [KeyboardButton(text=BTN_BALANCE_BUY), KeyboardButton(text="📢 Создать объявление")],
+        [KeyboardButton(text=referral_btn(bonus)), KeyboardButton(text="📊 Мой профиль")],
+        last,
+    ]
+    if loto_enabled():
+        rows.append([KeyboardButton(text=BTN_LOTO)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def loto_kb(link: str, text: str = "🎟 Открыть билеты") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text, url=link)]])
 
 
 def support_kb(link: str) -> InlineKeyboardMarkup:

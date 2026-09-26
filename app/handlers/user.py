@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
                            Message)
 
-from app import action_log, db, keyboards, services, subscription, texts, tokens
+from app import action_log, db, keyboards, loto, services, subscription, texts, tokens
 from app.config import ADMINS, PUBLIC_URL
 
 log = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ MENU_BUTTONS = {"💰 Баланс", "💎 Купить коины", "💎 Ку�
                 "📊 Мой профиль", "📢 Создать объявление", "📜 Правила", "📢 Канал и цены",
                 "📋 Чаты", "⚙️ Глобальные настройки", "💰 Выдать токены", "💰 Выдать коины", "📊 Статистика",
                 "🌐 Веб-панель", "🏠 Меню пользователя", keyboards.BTN_CHANNEL, keyboards.BTN_SITE,
-                keyboards.BTN_MY_ADS, keyboards.BTN_SUPPORT}
+                keyboards.BTN_MY_ADS, keyboards.BTN_SUPPORT, keyboards.BTN_LOTO}
 
 
 def is_menu_button(text: Optional[str]) -> bool:
@@ -181,6 +181,18 @@ async def cmd_ref(message: Message, bot: Bot) -> None:
 async def cmd_site(message: Message) -> None:
     await message.answer(await texts.t("txt_site", message.from_user, url=f"{PUBLIC_URL}/"),
                          reply_markup=keyboards.links_kb(None, f"{PUBLIC_URL}/"))
+
+
+@router.message(Command("loto"))
+@router.message(F.text == keyboards.BTN_LOTO)
+async def btn_loto(message: Message) -> None:
+    """«🎟 Бонус-Лото»: ссылка входа с короткоживущим токеном, новая при каждом нажатии."""
+    from app.config import loto_enabled
+    if not loto_enabled():
+        return
+    user = message.from_user
+    await message.answer(await texts.t("txt_loto_menu", user),
+                         reply_markup=keyboards.loto_kb(loto.sso_link(user.id, user.username)))
 
 
 @router.message(Command("support"))
