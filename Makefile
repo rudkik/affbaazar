@@ -13,6 +13,7 @@
 #  Домен и параметры Caddy берутся из .env (DOMAIN, WWW, BOT_PORT, CADDY_NETWORK, CADDYFILE).
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 DOMAIN ?= $(strip $(shell sed -n 's/^DOMAIN=//p' .env 2>/dev/null))
 ifeq ($(DOMAIN),)
 DOMAIN := affbazaar.com
