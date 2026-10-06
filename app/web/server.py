@@ -788,7 +788,8 @@ async def admin_delete_ad(ad_id: int, payload: dict, _: bool = Depends(require_a
         result = await ads.delete_ad(BOT, ad_id, by_admin_id=None, comment=comment, refund=refund)
     except ads.AdError as exc:
         raise HTTPException(404, str(exc))
-    return {"ok": True, "refunded": result["refunded"], "already": result.get("already", False)}
+    return {"ok": True, "refunded": result["refunded"], "already": result.get("already", False),
+            "tg_error": result.get("tg_error")}
 
 
 # ------------------------------------------------------------------ рубрики

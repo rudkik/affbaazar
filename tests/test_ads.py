@@ -135,6 +135,23 @@ async def main():
     assert out["refunded"] == 0 and await tk.balance(user.id) == bal
     print("удаление без возврата OK")
 
+    # --- Telegram отказал (нет права удалять) → ошибка видна, повтор дочищает -
+    res3 = await ads.publish_ad(bot, user, text="Третье", ad_type_row=t, vertical_row=v)
+    from aiogram.exceptions import TelegramBadRequest
+    async def deny(chat_id, message_id):
+        raise TelegramBadRequest(method=None, message="not enough rights")
+    orig_delete = bot.delete_message
+    bot.delete_message = deny
+    out = await ads.delete_ad(bot, res3["ad_id"], by_admin_id=999)
+    assert not out["already"] and out["refunded"] and "not enough rights" in out["tg_error"], out
+    _, total = await sdb.query_posts()
+    assert total == 0, "с сайта снято, хотя из канала нет"
+    bot.delete_message = orig_delete
+    again = await ads.delete_ad(bot, res3["ad_id"], by_admin_id=999)
+    assert again["already"] and again["refunded"] == 0 and again["tg_error"] is None, again
+    assert (CHANNEL, res3["message_id"]) in bot.deleted, "повторное нажатие сняло пост из канала"
+    print("отказ Telegram OK: ошибка возвращена, повтор дочистил канал")
+
     # --- права на кнопки под постом ---------------------------------------
     assert await ads.is_channel_admin(bot, 999) is True, "админ бота"
     assert await ads.is_channel_admin(bot, 555) is True, "админ канала"

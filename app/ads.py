@@ -472,9 +472,10 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
                           delete_comment = ?, deleted_at = datetime('now'), unpinned = 1
            WHERE id = ? AND status <> 'deleted'""",
         (by_admin_id, kind, comment, ad_id))
-    if not claim.rowcount:
-        return {"already": True, "refunded": 0, "user_id": ad["user_id"]}
 
+    # Пост в канале снимаем даже если запись уже помечена удалённой: если в прошлый раз
+    # Telegram отказал (нет права «удалять сообщения»), повторное нажатие дочистит канал.
+    tg_error = None
     if bot and ad["channel_message_id"]:
         try:
             if ad["pinned_until"] and not ad["unpinned"]:
@@ -484,7 +485,11 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
         try:
             await bot.delete_message(ad["channel_id"], ad["channel_message_id"])
         except TelegramAPIError as exc:
-            log.warning("Не удалось удалить пост %s: %s", ad_id, exc)
+            tg_error = str(exc)
+            log.warning("Не удалось удалить пост %s из канала: %s", ad_id, exc)
+
+    if not claim.rowcount:
+        return {"already": True, "refunded": 0, "user_id": ad["user_id"], "tg_error": None}
 
     refunded = 0
     if refund and ad["cost_total"]:
@@ -513,7 +518,7 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
                             f"объявление #{ad_id}, возврат {refunded}, коммент: {comment or '-'}",
                             event=f"удаление объявления ({kind})")
     return {"already": False, "refunded": refunded, "user_id": ad["user_id"],
-            "delete_kind": kind, "ad": dict(ad)}
+            "delete_kind": kind, "ad": dict(ad), "tg_error": tg_error}
 
 
 # ------------------------------------------------------------------ снятие закрепа

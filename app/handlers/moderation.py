@@ -49,6 +49,9 @@ async def cb_ad_del(callback: CallbackQuery, bot: Bot) -> None:
     text = "🗑 Объявление удалено."
     if res["refunded"]:
         text += f" Автору возвращено {res['refunded']} коинов."
+    if res["tg_error"]:
+        text += (f"\n\n⚠️ Пост из канала не снят: {res['tg_error']}. "
+                 "Дайте боту право «Удалять сообщения» и нажмите ещё раз.")
     await callback.answer(text, show_alert=True)
 
 
@@ -120,4 +123,7 @@ async def comment_input(message: Message, bot: Bot, state: FSMContext) -> None:
     note = f"✅ Объявление #{ad_id} удалено с комментарием."
     if res["refunded"]:
         note += f" Автору возвращено {res['refunded']} коинов."
+    if res["tg_error"]:
+        note += (f"\n\n⚠️ Пост из канала не снят: {html.escape(res['tg_error'])}. "
+                 "Дайте боту право «Удалять сообщения» и нажмите «Удалить» под постом ещё раз.")
     await message.answer(note)

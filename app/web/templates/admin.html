@@ -646,7 +646,10 @@ async function delAd(id){
   const comment = prompt('Комментарий автору (необязательно):', '') || '';
   const refund = confirm('Вернуть коины автору? OK — вернуть, Отмена — не возвращать.');
   const r = await post(`/admin/api/ads/${id}/delete`, {comment, refund});
-  alert(r.already ? 'Уже было удалено ранее' : 'Удалено. Возвращено коинов: ' + (r.refunded ?? 0));
+  let msg = r.already ? 'Уже было удалено ранее' : 'Удалено. Возвращено коинов: ' + (r.refunded ?? 0);
+  if (r.tg_error) msg += '\n\n⚠️ Пост в канале НЕ удалён: ' + r.tg_error +
+    '\nПроверьте, что у бота в канале есть право «Удалять сообщения», и нажмите «Удалить» ещё раз.';
+  alert(msg);
   loadAds();
 }
 
