@@ -10,7 +10,6 @@ from typing import Any, Optional
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app import action_log, db, locks, site_db, subscription, texts, tokens
 
@@ -173,14 +172,6 @@ def format_ad(text: str, ad_type_tag: Optional[str], vertical_tag: Optional[str]
     return (f"{head}\n\n{body}{socials_block(socials)}{footer}").strip()
 
 
-def admin_kb(ad_id: int) -> InlineKeyboardMarkup:
-    """Кнопки под постом в канале. Нажатия проверяются на права администратора."""
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🗑 Удалить", callback_data=f"ad_del:{ad_id}"),
-        InlineKeyboardButton(text="💬 Удалить с комментом", callback_data=f"ad_delc:{ad_id}"),
-    ]])
-
-
 # ------------------------------------------------------------------ канал
 async def ad_channel(bot: Bot) -> tuple[int, str]:
     channel_id = await db.get_int("ad_channel_id")
@@ -278,14 +269,11 @@ async def _publish_ad(bot: Bot, user, *, text: str, ad_type_row, vertical_row=No
 
     try:
         if has_image and media_type == "photo":
-            sent = await bot.send_photo(channel_id, media_file_id, caption=body,
-                                        reply_markup=admin_kb(ad_id))
+            sent = await bot.send_photo(channel_id, media_file_id, caption=body)
         elif has_image and media_type == "video":
-            sent = await bot.send_video(channel_id, media_file_id, caption=body,
-                                        reply_markup=admin_kb(ad_id))
+            sent = await bot.send_video(channel_id, media_file_id, caption=body)
         else:
-            sent = await bot.send_message(channel_id, body, disable_web_page_preview=True,
-                                          reply_markup=admin_kb(ad_id))
+            sent = await bot.send_message(channel_id, body, disable_web_page_preview=True)
     except TelegramAPIError as exc:
         await db.execute("DELETE FROM ads WHERE id = ?", (ad_id,))
         if quote["total"]:
