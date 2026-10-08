@@ -49,12 +49,14 @@ def logo_url() -> str:
     return f"/branding/logo.png?v={version}"
 
 
-async def render(name: str) -> HTMLResponse:
+async def render(name: str, **extra: str) -> HTMLResponse:
     """Отдаёт страницу, подставляя брендинг в плейсхолдеры {{...}} закэшированного шаблона."""
     values = {
         "site_title": await db.get_setting("site_title"),
         "site_tagline": await db.get_setting("site_tagline"),
         "logo_url": logo_url(),
+        "admin_feed": "",   # "1" — лента открыта из админки, под постами кнопки удаления
+        **extra,
     }
     text = page(name)
     for key, value in values.items():
@@ -313,6 +315,14 @@ async def admin_page(request: Request):
     if not is_authed(request):
         return await render("login.html")
     return await render("admin.html")
+
+
+@app.get("/admin/feed", response_class=HTMLResponse)
+async def admin_feed(request: Request):
+    """Та же лента, что на сайте, но под каждым постом — кнопки удаления."""
+    if not is_authed(request):
+        return await render("login.html")
+    return await render("index.html", admin_feed="1")
 
 
 @app.post("/admin/login")
@@ -790,6 +800,29 @@ async def admin_delete_ad(ad_id: int, payload: dict, _: bool = Depends(require_a
         raise HTTPException(404, str(exc))
     return {"ok": True, "refunded": result["refunded"], "already": result.get("already", False),
             "tg_error": result.get("tg_error")}
+
+
+@app.post("/admin/api/posts/{post_id}/delete")
+async def admin_delete_post(post_id: int, payload: dict, _: bool = Depends(require_admin)):
+    """Удаление из ленты модерации (/admin/feed): пост сайта → объявление по (канал, message_id)."""
+    from app import ads, services
+    post = await site_db.get_post(post_id)
+    if not post:
+        raise HTTPException(404, "Пост не найден")
+    comment = (payload.get("comment") or "").strip() or None
+    refund = bool(payload.get("refund", True))
+    ad = await db.fetchone("SELECT id FROM ads WHERE channel_id = ? AND channel_message_id = ?",
+                           (post["source_chat_id"], post["source_message_id"]))
+    if ad:
+        result = await ads.delete_ad(BOT, int(ad["id"]), by_admin_id=None, comment=comment,
+                                     refund=refund)
+        return {"ok": True, "refunded": result["refunded"], "already": result.get("already", False),
+                "tg_error": result.get("tg_error")}
+    # Пост без объявления (старый репост из чата): снимаем из канала и с сайта, возвращать нечего
+    if BOT and post["source_message_id"]:
+        await services.delete_quiet(BOT, post["source_chat_id"], post["source_message_id"])
+    await site_db.mark_deleted(post["source_chat_id"], post["source_message_id"])
+    return {"ok": True, "refunded": 0, "already": False, "tg_error": None}
 
 
 # ------------------------------------------------------------------ рубрики

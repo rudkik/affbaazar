@@ -75,11 +75,12 @@
 
   nav{display:flex;gap:6px;flex-wrap:wrap;overflow-x:auto;max-width:100%;
       -webkit-overflow-scrolling:touch;padding:3px 0 5px}
-  nav button{background:var(--card);border:2px solid var(--stroke);color:var(--text);
+  nav button, nav a{background:var(--card);border:2px solid var(--stroke);color:var(--text);
              padding:0 13px;height:36px;border-radius:999px;cursor:pointer;
              font-family:var(--font-head);font-size:13px;font-weight:700;white-space:nowrap;
              transition:transform .08s ease,box-shadow .08s ease}
-  nav button:hover{transform:translate(-1px,-1px);box-shadow:2px 2px 0 var(--shadow-c)}
+  nav a{display:inline-flex;align-items:center;text-decoration:none}
+  nav button:hover, nav a:hover{transform:translate(-1px,-1px);box-shadow:2px 2px 0 var(--shadow-c)}
   nav button.active{background:var(--nav-on-bg);color:var(--nav-on-fg);box-shadow:3px 3px 0 var(--shadow-c)}
   .hdr-link{color:var(--muted);text-decoration:none;font-family:var(--font-head);font-size:13px;
             font-weight:700;padding:8px 4px;min-height:40px;display:inline-flex;align-items:center}
@@ -213,8 +214,9 @@
     <button data-tab="settings">Настройки</button>
     <button data-tab="restricted">Ограниченные</button>
     <button data-tab="payments">Платежи</button>
+    <a href="/admin/feed" title="Лента как на сайте, с кнопками удаления под постами">Лента</a>
   </nav>
-  <a href="/" class="hdr-link">лента</a>
+  <a href="/" class="hdr-link">сайт</a>
   <a href="/admin/logout" class="hdr-link">выйти</a>
 </header>
 <main>

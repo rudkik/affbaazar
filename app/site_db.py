@@ -146,6 +146,12 @@ async def mirror_post(**kw) -> None:
     await conn().commit()
 
 
+async def get_post(post_id: int) -> Optional[dict]:
+    async with conn().execute("SELECT * FROM posts WHERE id = ?", (post_id,)) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def mark_deleted(source_chat_id: int, source_message_id: int) -> None:
     await conn().execute(
         "UPDATE posts SET is_deleted = 1 WHERE source_chat_id = ? AND source_message_id = ?",

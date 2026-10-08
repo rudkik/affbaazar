@@ -322,6 +322,25 @@
   .write-btn:hover{background:var(--red);color:#fff;text-decoration:none;
        box-shadow:3px 3px 0 var(--shadow-color)}
 
+  /* ---------- лента модерации (/admin/feed): кнопки под постом ---------- */
+  .admin-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+       padding-top:12px;border-top:2px dashed var(--line)}
+  .adm-btn{height:34px;padding:0 14px;border-radius:var(--radius-sm);border:2px solid var(--ink);
+       font-family:var(--font-head);font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;
+       box-shadow:3px 3px 0 var(--shadow-color);transition:transform .08s ease,box-shadow .08s ease}
+  .adm-btn:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--shadow-color)}
+  .adm-btn:disabled{opacity:.5;cursor:default;transform:none}
+  .adm-btn.del{background:var(--red);color:#fff}
+  .adm-btn.del:hover{background:var(--red-dark)}
+  .adm-btn.delc{background:var(--card);color:var(--red)}
+  .adm-btn.delc:hover{background:var(--red-weak)}
+  .adm-btn.delnr{margin-left:auto;background:transparent;color:var(--muted);
+       border:2px dashed var(--line);box-shadow:none;opacity:.75}
+  .adm-btn.delnr:hover{opacity:1;color:var(--red);border-color:var(--red);box-shadow:none}
+  .post.is-removing{opacity:0;transform:translateX(24px);transition:opacity .25s ease,transform .25s ease}
+  a.live.admin-link{text-decoration:none;cursor:pointer}
+  a.live.admin-link:hover{background:var(--yellow);color:#1c2540}
+
   .post.is-deleted{opacity:.8}
   .delete-comment{padding:10px 12px;border-radius:var(--radius-sm);border:2px dashed var(--red);
        background:var(--red-weak);color:var(--red-dark);font-size:13px;font-weight:700;line-height:1.45}
@@ -397,7 +416,7 @@
   }
 </style>
 </head>
-<body>
+<body data-admin-feed="{{admin_feed}}">
 <div class="topstripe" aria-hidden="true"></div>
 <header>
   <div class="header-inner">
@@ -879,9 +898,60 @@
     appendTextBody(body, p.text);
     el.appendChild(body);
     el.appendChild(buildFooter(p));
+    if (ADMIN_FEED) el.appendChild(buildAdminFoot(p, el));
 
     el.dataset.id = p.id;
     return el;
+  }
+
+  // ---------- лента модерации: кнопки удаления под постом ----------
+  var ADMIN_FEED = document.body.dataset.adminFeed === '1';
+
+  function buildAdminFoot(p, card){
+    var foot = h('div', { class: 'admin-foot' });
+    var btns = [
+      h('button', { type: 'button', class: 'adm-btn del' }, ['Удалить']),
+      h('button', { type: 'button', class: 'adm-btn delc' }, ['Удалить + коммент']),
+      h('button', { type: 'button', class: 'adm-btn delnr', title: 'Коины автору не возвращаются' },
+        ['Удалить без возврата + коммент'])
+    ];
+    btns[0].addEventListener('click', function(){ adminDelete(p, card, btns, false, true); });
+    btns[1].addEventListener('click', function(){ adminDelete(p, card, btns, true, true); });
+    btns[2].addEventListener('click', function(){ adminDelete(p, card, btns, true, false); });
+    btns.forEach(function(b){ foot.appendChild(b); });
+    return foot;
+  }
+
+  function adminDelete(p, card, btns, withComment, refund){
+    var comment = '';
+    if (withComment){
+      comment = prompt(refund
+        ? 'Комментарий автору (уйдёт вместе с уведомлением об удалении и возврате коинов):'
+        : 'Комментарий автору (коины НЕ возвращаются — обычно это нарушение правил):', '');
+      if (comment === null) return;
+      comment = comment.trim();
+    } else if (!confirm('Удалить объявление? Пост снимется из канала и с сайта, коины вернутся автору.')){
+      return;
+    }
+    btns.forEach(function(b){ b.disabled = true; });
+    apiFetch('/admin/api/posts/' + p.id + '/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment: comment, refund: refund })
+    }).then(function(r){ return r.json().then(function(d){ return r.ok ? d : Promise.reject(d); }); })
+      .then(function(d){
+        var msg = d.already ? 'Уже было удалено ранее' : 'Удалено' + (d.refunded ? ', возвращено ' + d.refunded + ' коинов' : '');
+        if (d.tg_error){
+          alert('⚠️ Пост в канале НЕ удалён: ' + d.tg_error +
+            '\nПроверьте, что у бота в канале есть право «Удалять сообщения», и нажмите ещё раз.');
+        }
+        showToast(msg, !!d.tg_error);
+        card.classList.add('is-removing');
+        setTimeout(function(){ card.remove(); total = Math.max(0, total - 1); renderCount(); }, 260);
+      })
+      .catch(function(e){
+        btns.forEach(function(b){ b.disabled = false; });
+        showToast((e && e.detail) || 'Не удалось удалить', true);
+      });
   }
 
   // Общий рендер текста объявления с раскрытием длинных — используется и в ленте, и в «Моих объявлениях».
@@ -954,6 +1024,14 @@
 
     el.dataset.id = p.id;
     return el;
+  }
+
+  if (ADMIN_FEED){
+    document.title = 'Модерация ленты · ' + document.title;
+    var liveEl = document.querySelector('.live');
+    if (liveEl){
+      liveEl.replaceWith(h('a', { class: 'live admin-link', href: '/admin' }, ['← админка · режим модерации']));
+    }
   }
 
   // ---------- data loading ----------

@@ -101,14 +101,22 @@ async def main():
         assert r.json()["already"] and r.json()["refunded"] == 0, r.json()
         print("удаление из админки OK: возврат", out["refunded"], "коинов, повторно 0")
 
-        # --- удаление без возврата ---
+        # --- лента модерации: страница и удаление без возврата по id поста сайта ---
+        assert 'data-admin-feed=""' in (await c.get("/")).text, "на сайте кнопок модерации нет"
+        assert 'data-admin-feed="1"' in (await c.get("/admin/feed")).text
+        post = (await c.get("/api/posts")).json()["items"][0]
         r = await c.get("/admin/api/ads", params={"status": "published"})
         ad2 = r.json()["items"][0]
         bal = await tk.balance(UID)
-        r = await c.post(f"/admin/api/ads/{ad2['id']}/delete",
+        r = await c.post(f"/admin/api/posts/{post['id']}/delete",
                          json={"comment": "Скам", "refund": False})
-        assert r.json()["refunded"] == 0 and await tk.balance(UID) == bal
-        print("удаление без возврата OK")
+        assert r.status_code == 200 and r.json()["refunded"] == 0, r.text
+        assert await tk.balance(UID) == bal
+        assert (CHANNEL, post["source_message_id"]) in bot.deleted
+        assert (await db.fetchone("SELECT status FROM ads WHERE id = ?", (ad2["id"],)))["status"] == "deleted"
+        assert (await c.get("/api/posts")).json()["total"] == 0, "лента пуста"
+        assert (await c.post("/admin/api/posts/777/delete", json={})).status_code == 404
+        print("лента модерации OK: флаг страницы, удаление без возврата по посту")
 
         # --- рубрики ---
         r = await c.get("/admin/api/rubrics")
