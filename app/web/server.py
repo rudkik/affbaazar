@@ -4,6 +4,8 @@ import hmac
 import html
 import json
 import logging
+import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -24,6 +26,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 # Загруженный через админку логотип живёт в томе с данными — переживает пересборку образа.
 BRANDING_DIR = DATA_DIR / "branding"
+MEDIA_DIR = DATA_DIR / "media"       # фото объявлений, скачанные из Telegram
 _page_cache: dict[str, str] = {}
 
 
@@ -185,6 +188,30 @@ async def admin_reset_logo(_: bool = Depends(require_admin)):
 
 
 # ------------------------------------------------------------------ публичная лента
+@app.get("/media/{file_id}")
+async def media_file(file_id: str):
+    """Фото объявления по telegram file_id: первый запрос скачивает файл из Telegram
+    в DATA_DIR/media, дальше отдаём с диска. Фото в Telegram всегда JPEG."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,200}", file_id):
+        raise HTTPException(404, "Нет такого файла")
+    path = MEDIA_DIR / (hashlib.sha1(file_id.encode()).hexdigest() + ".jpg")
+    if not path.exists():
+        if not BOT:
+            raise HTTPException(503, "Бот недоступен")
+        MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+        # качаем во временное имя и переименовываем: параллельные запросы не отдадут недокачанный файл
+        tmp = path.with_name(f"{path.stem}.{os.getpid()}-{id(file_id)}.part")
+        try:
+            await BOT.download(file_id, destination=tmp)
+            os.replace(tmp, path)
+        except Exception as exc:  # noqa: BLE001 — TelegramAPIError, сеть, диск
+            tmp.unlink(missing_ok=True)
+            log.warning("Не удалось скачать фото %s: %s", file_id[:16], exc)
+            raise HTTPException(404, "Файл недоступен")
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return await render("index.html")

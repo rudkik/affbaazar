@@ -295,6 +295,21 @@
   .status-badge.bad{background:var(--red);border-color:var(--ink);color:#fff}
   .cost-badge{background:var(--yellow);border-color:var(--ink);color:#1c2540}
 
+  /* ---------- фото объявления: превью до 430px, по клику — во весь экран ---------- */
+  .post-photo{display:block;width:fit-content;max-width:min(430px,100%);border-radius:var(--radius-sm);
+       border:2px solid var(--ink);overflow:hidden;background:var(--field-bg);cursor:zoom-in;
+       box-shadow:3px 3px 0 var(--shadow-color);transition:transform .12s ease,box-shadow .12s ease}
+  .post-photo:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--shadow-color)}
+  .post-photo img{display:block;max-width:100%;max-height:430px;object-fit:contain}
+  .lightbox{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;
+       padding:24px;background:rgba(11,15,28,.9);cursor:zoom-out;animation:fadeIn .15s ease}
+  .lightbox img{max-width:100%;max-height:100%;border-radius:var(--radius-sm);border:2px solid var(--yellow);
+       box-shadow:6px 6px 0 #0b0f1c;background:#000}
+  .lightbox-close{position:absolute;top:16px;right:16px;width:40px;height:40px;border-radius:50%;
+       border:2px solid var(--yellow);background:#1c2540;color:var(--yellow);font-size:22px;line-height:1;
+       cursor:pointer;font-weight:900}
+  body.no-scroll{overflow:hidden}
+
   .post-body{display:flex;flex-direction:column;gap:10px;min-width:0}
   .post-title{font-family:var(--font-head);font-weight:700;font-size:19px;line-height:1.25;
         color:var(--text)}
@@ -893,6 +908,7 @@
     meta.appendChild(h('time', { datetime: p.created_at, title: exactUTC(p.created_at), class: 'time' },
       [timeAgo(p.created_at)]));
     el.appendChild(meta);
+    appendPhoto(el, p);
 
     var body = h('div', { class: 'post-body' });
     appendTextBody(body, p.text);
@@ -954,6 +970,34 @@
       });
   }
 
+  // ---------- фото объявления ----------
+  // Файл отдаёт /media/<file_id>: сервер при первом обращении скачивает его из Telegram.
+  function appendPhoto(card, p){
+    if (p.media_type !== 'photo' || !p.media_file_id) return;
+    var url = '/media/' + encodeURIComponent(p.media_file_id);
+    var link = h('a', { class: 'post-photo', href: url, target: '_blank', rel: 'noopener',
+      title: 'Открыть фото' }, [h('img', { src: url, alt: 'Фото к объявлению', loading: 'lazy' })]);
+    link.addEventListener('click', function(e){ e.preventDefault(); openLightbox(url); });
+    card.appendChild(link);
+  }
+
+  function openLightbox(url){
+    var box = h('div', { class: 'lightbox', role: 'dialog', 'aria-label': 'Фото' }, [
+      h('img', { src: url, alt: '' }),
+      h('button', { type: 'button', class: 'lightbox-close', 'aria-label': 'Закрыть' }, ['×'])
+    ]);
+    function close(){
+      box.remove();
+      document.body.classList.remove('no-scroll');
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e){ if (e.key === 'Escape') close(); }
+    box.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    document.body.classList.add('no-scroll');
+    document.body.appendChild(box);
+  }
+
   // Общий рендер текста объявления с раскрытием длинных — используется и в ленте, и в «Моих объявлениях».
   // Первую строку показываем заголовком карточки, если она короткая и после неё есть текст.
   function appendTextBody(body, rawText){
@@ -1013,6 +1057,7 @@
     meta.appendChild(h('time', { datetime: p.created_at, title: exactUTC(p.created_at), class: 'time' },
       [timeAgo(p.created_at)]));
     el.appendChild(meta);
+    appendPhoto(el, p);
 
     var body = h('div', { class: 'post-body' });
     appendTextBody(body, p.text);

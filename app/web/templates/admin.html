@@ -103,6 +103,10 @@
   th{color:var(--muted);font-family:var(--font-head);font-weight:700;font-size:12px;
      text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;
      position:sticky;top:0;background:var(--head-bg);border-bottom:2px solid var(--stroke)}
+  /* пользователи: 9 столбцов — заголовки в две строки, чтобы таблица влезала без горизонтального скролла */
+  #tab-users th{white-space:normal;line-height:1.2;font-size:11px;letter-spacing:.03em}
+  #tab-users th,#tab-users td{padding:10px 8px}
+  #tab-users table{min-width:0}
   tbody tr:last-child td{border-bottom:none}
   tbody tr:hover td{background:var(--hover-row)}
   /* td.muted в JS — это ID, даты и charge_id: их нельзя рвать по дефису */
@@ -309,7 +313,7 @@
     <span class="muted" id="u-total"></span>
   </div>
   <div class="table-wrap"><table><thead><tr><th>ID</th><th>Юзернейм</th><th>Имя</th><th>Токены</th><th>Сообщений</th>
-    <th>Приглашено (активировались)</th><th>Удалений (нарушений)</th><th>Активирован</th><th>Начислить</th></tr></thead>
+    <th>Приглашено<br>(активировались)</th><th>Удалений<br>(нарушений)</th><th>Активирован</th><th>Начислить</th></tr></thead>
     <tbody id="u-body"></tbody></table></div>
 </section>
 
@@ -412,7 +416,7 @@ async function loadUsers(){
     <td>${u.deleted_total ? `${u.deleted_total} (${u.deleted_by_moderator})` : '<span class="muted">0</span>'}</td>
     <td><span class="pill ${u.activated?'ok':'bad'}">${u.activated?'да':'нет'}</span></td>
     <td style="white-space:nowrap">
-      <input id="give-${u.user_id}" type="number" value="10" style="width:74px">
+      <input id="give-${u.user_id}" type="number" value="10" style="width:60px">
       <button class="btn p sm" onclick="give(${u.user_id})">+</button></td></tr>`).join('');
 }
 async function give(uid){

@@ -13,9 +13,17 @@ al.LOG_DIR = cfg.LOG_DIR; al.RESTRICTED_LOG_DIR = cfg.RESTRICTED_LOG_DIR
 CHANNEL, UID = -1003334445556, 600001
 
 
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64 + b"\xff\xd9"
+
+
 class FakeBot:
-    """Веб-админка удаляет пост в Telegram через этот объект."""
-    def __init__(self): self.deleted, self.dm = [], []
+    """Веб-админка удаляет пост в Telegram через этот объект, сайт — качает фото."""
+    def __init__(self): self.deleted, self.dm, self.downloads = [], [], []
+    async def download(self, file, destination=None, **kw):
+        self.downloads.append(file)
+        if file.startswith("bad"):
+            raise RuntimeError("wrong file_id")
+        pathlib.Path(destination).write_bytes(JPEG)
     async def delete_message(self, chat_id, message_id):
         self.deleted.append((chat_id, message_id)); return True
     async def unpin_chat_message(self, chat_id, message_id=None): return True
@@ -166,6 +174,26 @@ async def main():
         assert "users" in st and "tokens_balance" in st, "старые ключи на месте"
         print("статистика OK: опубликовано", st["ads_published"], "удалено", st["ads_deleted"],
               "| возвращено коинов", st["coins_refunded_ads"])
+
+        # --- фото объявления: /media/<file_id> качает из Telegram один раз, дальше с диска ---
+        web.MEDIA_DIR = tmp / "media"
+        fid = "AgACAgIAAxkBAAIBb2b" + "x" * 30
+        r = await c.get(f"/media/{fid}")
+        assert r.status_code == 200 and r.content == JPEG, (r.status_code, r.headers)
+        assert r.headers["content-type"] == "image/jpeg" and "immutable" in r.headers["cache-control"]
+        r = await c.get(f"/media/{fid}")
+        assert r.status_code == 200 and bot.downloads.count(fid) == 1, "второй раз — с диска"
+        assert not list((tmp / "media").glob("*.part")), "временных файлов не осталось"
+        assert (await c.get("/media/bad" + "y" * 30)).status_code == 404, "Telegram отказал → 404"
+        assert (await c.get("/media/../../etc/passwd")).status_code == 404
+        assert (await c.get("/media/short")).status_code == 404
+        assert len(bot.downloads) == 2, bot.downloads
+        print("фото объявления OK: скачано один раз, кэш на диске, плохие id → 404")
+
+        # --- админка: пользователи без горизонтального скролла ---
+        page = (await c.get("/admin")).text
+        assert "Приглашено<br>" in page and "#tab-users th{white-space:normal" in page
+        print("таблица пользователей OK: заголовки в две строки")
 
         # --- выход ---
         await c.get("/admin/logout"); c.cookies.clear()
