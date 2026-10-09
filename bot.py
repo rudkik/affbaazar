@@ -74,6 +74,10 @@ async def main() -> None:
         return
     if not config.ADMINS:
         log.warning("ADMINS пуст — админ-команды бота будут недоступны")
+    if config.SECRET_KEY in ("", "insecure-dev-secret") or config.ADMIN_PASSWORD in ("", "admin"):
+        log.error("SECRET_KEY / ADMIN_PASSWORD не заданы или оставлены по умолчанию — "
+                  "с ними админку подделать тривиально. Заполните .env (make env)")
+        return
 
     await db.init()
     await site_db.init()

@@ -19,7 +19,9 @@ need ADMINS "ваш Telegram ID"
 need ADMIN_PASSWORD "пароль входа в /admin"
 need SECRET_KEY "openssl rand -hex 32"
 bad  ADMIN_PASSWORD "change-me" "смените пароль"
+bad  ADMIN_PASSWORD "admin" "смените пароль"
 bad  SECRET_KEY "change-me-too" "сгенерируйте: openssl rand -hex 32"
+bad  SECRET_KEY "insecure-dev-secret" "сгенерируйте: openssl rand -hex 32"
 
 TOKEN=$(env_get BOT_TOKEN)
 if [ -n "$TOKEN" ] && ! echo "$TOKEN" | grep -qE '^[0-9]+:[A-Za-z0-9_-]{30,}$'; then

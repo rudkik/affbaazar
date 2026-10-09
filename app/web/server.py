@@ -3,9 +3,11 @@ import hashlib
 import hmac
 import html
 import json
+import asyncio
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -14,7 +16,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import auth, cryptopay, db, keyboards, loto, site_db, texts
+from app import auth, cryptopay, db, keyboards, locks, loto, site_db, texts
 from app.config import ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
 
 # На боевом домене (https) куки отдаём только по защищённому соединению.
@@ -77,8 +79,53 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Chat Gate Bot", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="Chat Gate Bot", docs_url=None, redoc_url=None, openapi_url=None,
+              lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# ------------------------------------------------------------------ защита от потока запросов
+# ponytail: скользящее окно в памяти одного процесса; если контейнеров станет больше —
+# считать в Redis или в Caddy (rate_limit-плагин). Вебхуки платёжек под лимит не попадают.
+RATE_LIMIT = int(os.getenv("RATE_LIMIT", "120"))        # запросов с одного IP…
+RATE_WINDOW = int(os.getenv("RATE_WINDOW", "10"))        # …за столько секунд; 0 = выключено
+LOGIN_LIMIT = 10                                         # попыток входа в админку за то же окно
+RATE_EXEMPT = ("/webhooks/",)
+_hits: dict[str, list[float]] = {}
+
+
+def client_ip(request: Request) -> str:
+    """IP клиента: за Caddy — последний адрес в X-Forwarded-For (его дописывает сам Caddy)."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.rsplit(",", 1)[-1].strip()
+    return request.client.host if request.client else "?"
+
+
+def rate_limited(ip: str, now: Optional[float] = None, limit: Optional[int] = None) -> bool:
+    now = now if now is not None else time.monotonic()
+    limit = limit or RATE_LIMIT
+    window = _hits.setdefault(ip, [])
+    while window and window[0] <= now - RATE_WINDOW:
+        window.pop(0)
+    if len(window) >= limit:
+        return True
+    window.append(now)
+    if len(_hits) > 10_000:                                 # забытые IP не копим вечно
+        for key in [k for k, v in _hits.items() if not v or v[-1] <= now - RATE_WINDOW]:
+            _hits.pop(key, None)
+    return False
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if RATE_WINDOW and RATE_LIMIT and not request.url.path.startswith(RATE_EXEMPT):
+        ip = client_ip(request)
+        login = request.method == "POST" and request.url.path == "/admin/login"
+        if rate_limited(ip) or (login and rate_limited(f"login:{ip}", limit=LOGIN_LIMIT)):
+            return JSONResponse({"detail": "Слишком много запросов, подождите"}, status_code=429,
+                                headers={"Retry-After": str(RATE_WINDOW)})
+    return await call_next(request)
 
 # Экземпляр бота проставляется из bot.py — нужен для удаления/репоста из админки.
 BOT = None
@@ -90,17 +137,29 @@ def set_bot(bot) -> None:
 
 
 # ------------------------------------------------------------------ авторизация
-def _token() -> str:
-    return hmac.new(SECRET_KEY.encode(), b"admin-session", hashlib.sha256).hexdigest()
+ADMIN_SESSION_TTL = 7 * 24 * 3600
+
+
+def _token(exp: Optional[int] = None) -> str:
+    """Кука админа по паролю: «<срок>.<HMAC(срок)>» — без SECRET_KEY не подделать, после срока не работает."""
+    exp = exp or int(time.time()) + ADMIN_SESSION_TTL
+    sig = hmac.new(SECRET_KEY.encode(), f"admin-session:{exp}".encode(), hashlib.sha256).hexdigest()
+    return f"{exp}.{sig}"
+
+
+def _token_valid(cookie: str) -> bool:
+    exp, _, _ = cookie.partition(".")
+    return (exp.isdigit() and int(exp) > time.time()
+            and hmac.compare_digest(cookie, _token(int(exp))))
 
 
 def is_authed(request: Request) -> bool:
     """Админ по паролю ИЛИ вошедший через Telegram админ бота."""
     cookie = request.cookies.get("session", "")
-    if cookie and hmac.compare_digest(cookie, _token()):
+    if cookie and _token_valid(cookie):
         return True
     session = current_user(request)
-    return bool(session and session.get("adm"))
+    return bool(session and int(session.get("uid") or 0) in ADMINS)
 
 
 def current_user(request: Request) -> Optional[dict]:
@@ -198,16 +257,20 @@ async def media_file(file_id: str):
     if not path.exists():
         if not BOT:
             raise HTTPException(503, "Бот недоступен")
+        if not await site_db.has_media(file_id):
+            raise HTTPException(404, "Нет такого файла")
         MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-        # качаем во временное имя и переименовываем: параллельные запросы не отдадут недокачанный файл
-        tmp = path.with_name(f"{path.stem}.{os.getpid()}-{id(file_id)}.part")
-        try:
-            await BOT.download(file_id, destination=tmp)
-            os.replace(tmp, path)
-        except Exception as exc:  # noqa: BLE001 — TelegramAPIError, сеть, диск
-            tmp.unlink(missing_ok=True)
-            log.warning("Не удалось скачать фото %s: %s", file_id[:16], exc)
-            raise HTTPException(404, "Файл недоступен")
+        # одна закачка на файл: параллельные запросы ждут первую, а не качают каждый своё
+        async with locks.named(f"media:{file_id}"):
+            if not path.exists():
+                tmp = path.with_suffix(".part")
+                try:
+                    await BOT.download(file_id, destination=tmp)
+                    os.replace(tmp, path)
+                except Exception as exc:  # noqa: BLE001 — TelegramAPIError, сеть, диск
+                    tmp.unlink(missing_ok=True)
+                    log.warning("Не удалось скачать фото %s: %s", file_id[:16], exc)
+                    raise HTTPException(404, "Файл недоступен")
     return FileResponse(path, media_type="image/jpeg",
                         headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
@@ -344,7 +407,7 @@ async def api_my_ads(request: Request, limit: int = 50, offset: int = 0):
                   vertical_tag, text, media_type, cost_total, pin_hours, pinned_until,
                   status, delete_comment, created_at
            FROM ads WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?""",
-        (int(session["uid"]), min(limit, 200), offset))
+        (int(session["uid"]), max(1, min(limit, 200)), max(0, offset)))
     total = await db.scalar("SELECT COUNT(*) FROM ads WHERE user_id = ?", (int(session["uid"]),))
     return {"items": [dict(r) for r in rows], "total": total}
 
@@ -355,7 +418,7 @@ async def api_config():
     me = None
     if BOT:
         try:
-            me = (await BOT.get_me()).username
+            me = (await BOT.me()).username
         except Exception:  # noqa: BLE001
             me = None
     return {"bot_username": me, "public_url": PUBLIC_URL}
@@ -380,10 +443,13 @@ async def admin_feed(request: Request):
 @app.post("/admin/login")
 async def admin_login(password: str = Form(...)):
     if not hmac.compare_digest(password, ADMIN_PASSWORD):
+        # ponytail: глобальная задержка вместо лимита по IP (за Caddy IP не виден) — перебор
+        # замедляется до ~1 попытки/сек на соединение; лимит по X-Forwarded-For — если начнут долбить
+        await asyncio.sleep(1)
         return RedirectResponse("/admin?e=1", status_code=303)
     response = RedirectResponse("/admin", status_code=303)
     response.set_cookie("session", _token(), httponly=True, samesite="lax", secure=COOKIE_SECURE,
-                        max_age=7 * 24 * 3600)
+                        max_age=ADMIN_SESSION_TTL)
     return response
 
 
@@ -472,7 +538,7 @@ async def admin_users(q: str = "", limit: int = 50, offset: int = 0,
             FROM users u
             LEFT JOIN users r ON r.user_id = u.referrer_id
             {where} ORDER BY u.updated_at DESC LIMIT ? OFFSET ?""",
-        (*args, min(limit, 200), offset))
+        (*args, max(1, min(limit, 200)), offset))
     total = await db.scalar(f"SELECT COUNT(*) FROM users u {where}", args)
     return {"items": [dict(r) for r in rows], "total": total}
 
@@ -536,7 +602,7 @@ async def admin_messages(q: str = "", chat_id: Optional[int] = None, status: str
         f"""SELECT m.*, u.username, u.full_name FROM chat_messages m
             LEFT JOIN users u ON u.user_id = m.user_id
             WHERE {clause} ORDER BY m.id DESC LIMIT ? OFFSET ?""",
-        (*args, min(limit, 200), offset))
+        (*args, max(1, min(limit, 200)), offset))
     total = await db.scalar(f"SELECT COUNT(*) FROM chat_messages m WHERE {clause}", args)
     return {"items": [dict(r) for r in rows], "total": total}
 
@@ -635,7 +701,7 @@ async def admin_restricted(_: bool = Depends(require_admin)):
 async def admin_payments(limit: int = 50, _: bool = Depends(require_admin)):
     rows = await db.fetchall(
         """SELECT p.*, u.username FROM payments p LEFT JOIN users u ON u.user_id = p.user_id
-           ORDER BY p.id DESC LIMIT ?""", (min(limit, 200),))
+           ORDER BY p.id DESC LIMIT ?""", (max(1, min(limit, 200)),))
     return [dict(r) for r in rows]
 
 
@@ -788,10 +854,10 @@ async def admin_transactions(user_id: Optional[int] = None, limit: int = 100,
     if user_id:
         rows = await db.fetchall(
             "SELECT * FROM token_tx WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-            (user_id, min(limit, 500)))
+            (user_id, max(1, min(limit, 500))))
     else:
         rows = await db.fetchall("SELECT * FROM token_tx ORDER BY id DESC LIMIT ?",
-                                 (min(limit, 500),))
+                                 (max(1, min(limit, 500)),))
     return [dict(r) for r in rows]
 
 
@@ -822,7 +888,7 @@ async def admin_ads(q: str = "", status: str = "", ad_type: str = "", vertical: 
         f"""SELECT a.*, u.username, u.full_name FROM ads a
             LEFT JOIN users u ON u.user_id = a.user_id
             WHERE {clause} ORDER BY a.id DESC LIMIT ? OFFSET ?""",
-        (*args, min(limit, 200), offset))
+        (*args, max(1, min(limit, 200)), offset))
     total = await db.scalar(
         f"SELECT COUNT(*) FROM ads a LEFT JOIN users u ON u.user_id = a.user_id WHERE {clause}",
         args)

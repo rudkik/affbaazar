@@ -146,6 +146,13 @@ async def mirror_post(**kw) -> None:
     await conn().commit()
 
 
+async def has_media(file_id: str) -> bool:
+    """Есть ли пост с таким вложением — /media отдаёт только фото из ленты."""
+    async with conn().execute("SELECT 1 FROM posts WHERE media_file_id = ? AND media_type = 'photo' LIMIT 1",
+                              (file_id,)) as cur:
+        return await cur.fetchone() is not None
+
+
 async def get_post(post_id: int) -> Optional[dict]:
     async with conn().execute("SELECT * FROM posts WHERE id = ?", (post_id,)) as cur:
         row = await cur.fetchone()
@@ -269,6 +276,6 @@ async def query_posts(q: str = "", chat_id: Optional[int] = None, author: str = 
 
     sql = (f"SELECT * FROM posts WHERE {clause} ORDER BY {sort} {order}, id {order} "
            f"LIMIT ? OFFSET ?")
-    async with conn().execute(sql, (*args, min(int(limit), 200), int(offset))) as cur:
+    async with conn().execute(sql, (*args, max(1, min(int(limit), 200)), max(0, int(offset)))) as cur:
         rows = [dict(r) for r in await cur.fetchall()]
     return rows, total

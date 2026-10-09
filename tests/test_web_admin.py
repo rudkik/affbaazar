@@ -185,22 +185,89 @@ async def main():
         # --- фото объявления: /media/<file_id> качает из Telegram один раз, дальше с диска ---
         web.MEDIA_DIR = tmp / "media"
         fid = "AgACAgIAAxkBAAIBb2b" + "x" * 30
+        bad = "bad" + "y" * 30
+        video = "vid" + "v" * 30
+        for f, mt in ((fid, "photo"), (bad, "photo"), (video, "video")):
+            await sdb.mirror_post(source_chat_id=CHANNEL, source_message_id=hash(f) % 10**6,
+                                  channel_id=CHANNEL, channel_message_id=1, author_id=UID,
+                                  text="с фото", media_type=mt, media_file_id=f)
         r = await c.get(f"/media/{fid}")
         assert r.status_code == 200 and r.content == JPEG, (r.status_code, r.headers)
         assert r.headers["content-type"] == "image/jpeg" and "immutable" in r.headers["cache-control"]
         r = await c.get(f"/media/{fid}")
         assert r.status_code == 200 and bot.downloads.count(fid) == 1, "второй раз — с диска"
         assert not list((tmp / "media").glob("*.part")), "временных файлов не осталось"
-        assert (await c.get("/media/bad" + "y" * 30)).status_code == 404, "Telegram отказал → 404"
+        assert (await c.get(f"/media/{bad}")).status_code == 404, "Telegram отказал → 404"
         assert (await c.get("/media/../../etc/passwd")).status_code == 404
         assert (await c.get("/media/short")).status_code == 404
-        assert len(bot.downloads) == 2, bot.downloads
-        print("фото объявления OK: скачано один раз, кэш на диске, плохие id → 404")
+        assert (await c.get("/media/" + "z" * 40)).status_code == 404, "id не из ленты"
+        assert (await c.get(f"/media/{video}")).status_code == 404, "только фото, видео не качаем"
+        # параллельные запросы одного файла — одна закачка
+        fid2 = "AgACAgIAAxkBAAIBb2c" + "q" * 30
+        await sdb.mirror_post(source_chat_id=CHANNEL, source_message_id=424242, channel_id=CHANNEL,
+                              channel_message_id=1, author_id=UID, text="x", media_type="photo",
+                              media_file_id=fid2)
+        rs = await asyncio.gather(*[c.get(f"/media/{fid2}") for _ in range(5)])
+        assert all(r.status_code == 200 for r in rs) and bot.downloads.count(fid2) == 1, bot.downloads
+        assert [d for d in bot.downloads if d != fid2] == [fid, bad], \
+            "чужие id в Telegram не ходят: %r" % bot.downloads
+        print("фото объявления OK: скачано один раз, кэш на диске, чужие/плохие id → 404 без Telegram")
+
+        # --- админская кука: со сроком, чужая/просроченная не работает; неверный пароль — медленно ---
+        import time as _time
+        good = c.cookies.get("session")
+        assert good and good.split(".")[0].isdigit() and int(good.split(".")[0]) > _time.time()
+        expired = web._token(int(_time.time()) - 1)
+        c.cookies.clear(); c.cookies.set("session", expired)
+        assert (await c.get("/admin/api/ads")).status_code == 401, "просроченная кука"
+        forged = ("1" if good[0] != "1" else "2") + good[1:]
+        c.cookies.clear(); c.cookies.set("session", forged)
+        assert (await c.get("/admin/api/ads")).status_code == 401, "подделанный срок"
+        c.cookies.clear(); c.cookies.set("session", good)
+        t0 = _time.monotonic()
+        r = await c.post("/admin/login", data={"password": "wrong"})
+        assert r.status_code == 303 and "e=1" in r.headers["location"]
+        assert _time.monotonic() - t0 >= 0.9, "неверный пароль должен стоить ~1 с"
+        assert (await c.get("/admin/api/ads")).status_code == 200, "кука не затёрта"
+        assert (await c.get("/openapi.json")).status_code == 404, "схема API закрыта"
+        # отрицательный limit в SQLite = «без ограничения» — зажимаем
+        assert len((await c.get("/admin/api/ads", params={"limit": -1})).json()["items"]) <= 1
+        assert len((await c.get("/api/posts", params={"limit": -1, "include_deleted": "true"})).json()["items"]) <= 1
+        # кука Telegram с флагом adm, но id не в ADMINS — не админ
+        import app.auth as auth_mod
+        c.cookies.clear(); c.cookies.set(auth_mod.SESSION_COOKIE, auth_mod.issue_session(123, "x", True))
+        assert (await c.get("/admin/api/ads")).status_code == 401, "adm в куке не важен, важен ADMINS"
+        c.cookies.clear(); c.cookies.set(auth_mod.SESSION_COOKIE, auth_mod.issue_session(999, "a", False))
+        assert (await c.get("/admin/api/ads")).status_code == 200, "id из ADMINS — админ"
+        c.cookies.clear(); c.cookies.set("session", good)
+        print("админская кука OK: срок, подделка, задержка при неверном пароле")
 
         # --- админка: пользователи без горизонтального скролла ---
         page = (await c.get("/admin")).text
         assert "Приглашено<br>" in page and "#tab-users th{white-space:normal" in page
         print("таблица пользователей OK: заголовки в две строки")
+
+        # --- лимит запросов: с одного IP не больше RATE_LIMIT за RATE_WINDOW, вебхуки не считаем ---
+        web._hits.clear()
+        assert not any(web.rate_limited("10.0.0.1", now=100 + i * 0.01) for i in range(web.RATE_LIMIT))
+        assert web.rate_limited("10.0.0.1", now=101), "сверх лимита — 429"
+        assert not web.rate_limited("10.0.0.2", now=101), "другой IP не затронут"
+        assert not web.rate_limited("10.0.0.1", now=101 + web.RATE_WINDOW + 1), "окно прошло"
+        web._hits.clear(); web.RATE_LIMIT, saved = 3, web.RATE_LIMIT
+        hdr = {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}          # Caddy дописывает свой IP последним
+        codes = [(await c.get("/api/rubrics", headers=hdr)).status_code for _ in range(4)]
+        assert codes == [200, 200, 200, 429], codes
+        assert (await c.get("/api/rubrics", headers={"X-Forwarded-For": "9.9.9.9"})).status_code == 200
+        assert (await c.post("/webhooks/loto", headers=hdr, content=b"{}")).status_code == 401, \
+            "вебхук не под лимитом: дошёл до проверки подписи"
+        web.RATE_LIMIT = saved; web._hits.clear()
+        web.LOGIN_LIMIT, saved_login = 2, web.LOGIN_LIMIT
+        hdr = {"X-Forwarded-For": "7.7.7.7"}
+        codes = [(await c.post("/admin/login", data={"password": "x"}, headers=hdr)).status_code
+                 for _ in range(3)]
+        assert codes == [303, 303, 429], "подбор пароля: %r" % codes
+        web.LOGIN_LIMIT = saved_login; web._hits.clear()
+        print("лимит запросов OK: 429 сверх лимита, по IP из X-Forwarded-For, вебхуки без лимита")
 
         # --- выход ---
         await c.get("/admin/logout"); c.cookies.clear()
