@@ -110,7 +110,9 @@ async def main():
         print("удаление из админки OK: возврат", out["refunded"], "коинов, повторно 0")
 
         # --- лента модерации: страница и удаление без возврата по id поста сайта ---
-        assert 'data-admin-feed=""' in (await c.get("/")).text, "на сайте кнопок модерации нет"
+        home = (await c.get("/")).text
+        assert 'data-admin-feed=""' in home, "на сайте кнопок модерации нет"
+        assert "G-SZFT16PCD2" in home and "location.pathname !== '/admin/feed'" in home, "Google tag на сайте"
         assert 'data-admin-feed="1"' in (await c.get("/admin/feed")).text
         post = (await c.get("/api/posts")).json()["items"][0]
         r = await c.get("/admin/api/ads", params={"status": "published"})
