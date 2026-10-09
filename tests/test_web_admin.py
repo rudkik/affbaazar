@@ -125,6 +125,8 @@ async def main():
         assert (await c.get("/api/posts")).json()["total"] == 0, "лента пуста"
         adm = (await c.get("/api/posts", params={"include_deleted": "true"})).json()
         assert adm["total"] == 2 and all(p["is_deleted"] for p in adm["items"]), "админ видит удалённые"
+        info = {p["delete_comment"]: p["delete_refund"] for p in adm["items"]}
+        assert info == {"Не по правилам": cost, "Скам": 0}, "возврат и причина из базы бота: %r" % info
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app), base_url="http://t") as anon:
             assert (await anon.get("/api/posts", params={"include_deleted": "true"})).json()["total"] == 0, \
                 "публике удалённые не отдаются"

@@ -231,7 +231,28 @@ async def api_posts(request: Request, q: str = "", chat_id: Optional[int] = None
         only_pinned=only_pinned, only_reposted=only_reposted, period=period,
         sort=sort, order=order, limit=limit, offset=offset, after_id=after_id,
         include_deleted=include_deleted)
+    if include_deleted:
+        await _attach_delete_info(rows)
     return {"items": rows, "total": total}
+
+
+async def _attach_delete_info(rows: list[dict]) -> None:
+    """Удалённым постам ленты модерации дописываем возврат и причину из базы бота
+    (в site.db этого нет): delete_refund — сколько коинов вернули, delete_comment — текст."""
+    deleted = [r for r in rows if r.get("is_deleted") and r.get("source_message_id")]
+    if not deleted:
+        return
+    marks = ",".join("?" * len(deleted))
+    ads_rows = await db.fetchall(
+        f"""SELECT channel_id, channel_message_id, refunded, cost_total, delete_comment
+            FROM ads WHERE status = 'deleted' AND channel_message_id IN ({marks})""",
+        [r["source_message_id"] for r in deleted])
+    by_key = {(a["channel_id"], a["channel_message_id"]): a for a in ads_rows}
+    for r in deleted:
+        a = by_key.get((r["source_chat_id"], r["source_message_id"]))
+        if a:
+            r["delete_refund"] = int(a["cost_total"] or 0) if a["refunded"] else 0
+            r["delete_comment"] = a["delete_comment"]
 
 
 @app.get("/api/rubrics")

@@ -360,7 +360,7 @@
   .post.adm-deleted .post-photo{cursor:default;pointer-events:none}
   .badge.deleted{background:var(--faint);border-color:var(--faint);color:#fff;text-transform:uppercase;
        letter-spacing:.05em;font-family:var(--font-head);font-weight:900;font-size:11px}
-  .admin-foot .note{font-size:13px;font-weight:700;color:var(--faint)}
+  .admin-foot .note{font-size:13px;font-weight:700;color:var(--faint);line-height:1.5}
   a.live.admin-link{text-decoration:none;cursor:pointer}
   a.live.admin-link:hover{background:var(--yellow);color:#1c2540}
 
@@ -924,8 +924,10 @@
     el.appendChild(body);
     el.appendChild(buildFooter(p));
     if (ADMIN_FEED){
-      if (p.is_deleted) el.classList.add('is-deleted', 'adm-deleted');
-      else el.appendChild(buildAdminFoot(p, el));
+      if (p.is_deleted){
+        el.classList.add('is-deleted', 'adm-deleted');
+        el.appendChild(deleteNote(p));
+      } else el.appendChild(buildAdminFoot(p, el));
     }
 
     el.dataset.id = p.id;
@@ -951,7 +953,15 @@
   }
 
   // tgError — в канале пост остался: кнопки оставляем, чтобы нажать ещё раз после выдачи права боту
-  function markCardDeleted(card, btns, tgError){
+  // «Снято из канала и с сайта · С возвратом коинов · Причина удаления: …»
+  function deleteNote(p){
+    var parts = ['Снято из канала и с сайта'];
+    if (p.delete_refund != null) parts.push(p.delete_refund ? 'С возвратом коинов' : 'Без возврата');
+    if (p.delete_comment) parts.push('Причина удаления: ' + p.delete_comment);
+    return h('div', { class: 'admin-foot' }, [h('span', { class: 'note' }, [parts.join(' · ')])]);
+  }
+
+  function markCardDeleted(card, btns, tgError, info){
     card.classList.add('is-deleted', 'adm-deleted');
     var meta = card.querySelector('.post-meta');
     if (meta && !meta.querySelector('.badge.deleted')){
@@ -962,8 +972,7 @@
       return;
     }
     var foot = card.querySelector('.admin-foot');
-    if (foot) foot.replaceWith(h('div', { class: 'admin-foot' },
-      [h('span', { class: 'note' }, ['Снято из канала и с сайта'])]));
+    if (foot) foot.replaceWith(deleteNote(info || {}));
   }
 
   function adminDelete(p, card, btns, withComment, refund){
@@ -989,7 +998,8 @@
             '\nПроверьте, что у бота в канале есть право «Удалять сообщения», и нажмите ещё раз.');
         }
         showToast(msg, !!d.tg_error);
-        markCardDeleted(card, btns, d.tg_error);
+        markCardDeleted(card, btns, d.tg_error,
+          d.already ? {} : { delete_refund: d.refunded || 0, delete_comment: comment });
       })
       .catch(function(e){
         btns.forEach(function(b){ b.disabled = false; });
