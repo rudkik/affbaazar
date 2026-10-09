@@ -218,15 +218,19 @@ async def index():
 
 
 @app.get("/api/posts")
-async def api_posts(q: str = "", chat_id: Optional[int] = None, author: str = "",
-                    media: str = "", ad_type: str = "", vertical: str = "",
+async def api_posts(request: Request, q: str = "", chat_id: Optional[int] = None,
+                    author: str = "", media: str = "", ad_type: str = "", vertical: str = "",
                     only_pinned: bool = False, only_reposted: bool = False,
                     period: str = "all", sort: str = "created_at", order: str = "desc",
-                    limit: int = 50, offset: int = 0, after_id: Optional[int] = None):
+                    limit: int = 50, offset: int = 0, after_id: Optional[int] = None,
+                    include_deleted: bool = False):
+    # удалённые посты (серым, с пометкой) — только в ленте модерации, публике их не отдаём
+    include_deleted = include_deleted and is_authed(request)
     rows, total = await site_db.query_posts(
         q=q, chat_id=chat_id, author=author, media=media, ad_type=ad_type, vertical=vertical,
         only_pinned=only_pinned, only_reposted=only_reposted, period=period,
-        sort=sort, order=order, limit=limit, offset=offset, after_id=after_id)
+        sort=sort, order=order, limit=limit, offset=offset, after_id=after_id,
+        include_deleted=include_deleted)
     return {"items": rows, "total": total}
 
 

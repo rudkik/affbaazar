@@ -152,6 +152,31 @@ async def main():
     assert (CHANNEL, res3["message_id"]) in bot.deleted, "повторное нажатие сняло пост из канала"
     print("отказ Telegram OK: ошибка возвращена, повтор дочистил канал")
 
+    # --- упало на полпути (после «занятия» и возврата, например сломан шаблон уведомления) →
+    #     лента уже без поста, повтор дочищает канал, второго возврата нет ------------------
+    res4 = await ads.publish_ad(bot, user, text="Четвёртое", ad_type_row=t, vertical_row=v)
+    bal = await tk.balance(user.id)
+    import app.texts as texts_mod
+    async def broken_t(*a, **kw):
+        raise RuntimeError("шаблон сломан")
+    texts_mod.t, orig_t = broken_t, texts_mod.t
+    bot.delete_message = deny
+    try:
+        await ads.delete_ad(bot, res4["ad_id"], by_admin_id=999)
+        raise AssertionError("должно было упасть")
+    except RuntimeError:
+        pass
+    texts_mod.t = orig_t
+    _, total = await sdb.query_posts()
+    assert total == 0, "пост снят с сайта, хотя вызов упал"
+    refunded_once = await tk.balance(user.id) - bal
+    assert refunded_once > 0, "возврат успел пройти"
+    bot.delete_message = orig_delete
+    again = await ads.delete_ad(bot, res4["ad_id"], by_admin_id=999)
+    assert again["already"] and await tk.balance(user.id) == bal + refunded_once, "второго возврата нет"
+    assert (CHANNEL, res4["message_id"]) in bot.deleted, "повтор снял пост из канала"
+    print("сбой на полпути OK: сайт и канал дочищены, возврат один")
+
     # --- права на кнопки под постом ---------------------------------------
     assert await ads.is_channel_admin(bot, 999) is True, "админ бота"
     assert await ads.is_channel_admin(bot, 555) is True, "админ канала"

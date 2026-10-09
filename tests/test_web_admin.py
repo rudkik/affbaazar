@@ -123,6 +123,11 @@ async def main():
         assert (CHANNEL, post["source_message_id"]) in bot.deleted
         assert (await db.fetchone("SELECT status FROM ads WHERE id = ?", (ad2["id"],)))["status"] == "deleted"
         assert (await c.get("/api/posts")).json()["total"] == 0, "лента пуста"
+        adm = (await c.get("/api/posts", params={"include_deleted": "true"})).json()
+        assert adm["total"] == 2 and all(p["is_deleted"] for p in adm["items"]), "админ видит удалённые"
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app), base_url="http://t") as anon:
+            assert (await anon.get("/api/posts", params={"include_deleted": "true"})).json()["total"] == 0, \
+                "публике удалённые не отдаются"
         assert (await c.post("/admin/api/posts/777/delete", json={})).status_code == 404
         print("лента модерации OK: флаг страницы, удаление без возврата по посту")
 

@@ -223,8 +223,9 @@ async def query_posts(q: str = "", chat_id: Optional[int] = None, author: str = 
                       only_pinned: bool = False, only_reposted: bool = False,
                       period: str = "all", sort: str = "created_at", order: str = "desc",
                       limit: int = 50, offset: int = 0,
-                      after_id: Optional[int] = None) -> tuple[list[dict], int]:
-    where = ["is_deleted = 0"]
+                      after_id: Optional[int] = None,
+                      include_deleted: bool = False) -> tuple[list[dict], int]:
+    where = ["1=1" if include_deleted else "is_deleted = 0"]
     args: list = []
     if q:
         where.append("search_blob LIKE ?")

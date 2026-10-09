@@ -461,18 +461,21 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
            WHERE id = ? AND status <> 'deleted'""",
         (by_admin_id, kind, comment, ad_id))
 
-    # Пост в канале снимаем даже если запись уже помечена удалённой: если в прошлый раз
-    # Telegram отказал (нет права «удалять сообщения»), повторное нажатие дочистит канал.
+    # Сайт и канал чистим при каждом вызове, даже если запись уже помечена удалённой, и
+    # сайт — раньше всего остального: если прошлый раз упало на полпути (Telegram отказал,
+    # сеть, ошибка после «занятия»), повторное нажатие дочищает и ленту, и канал.
+    if ad["channel_message_id"]:
+        await site_db.mark_deleted(ad["channel_id"], ad["channel_message_id"])
     tg_error = None
     if bot and ad["channel_message_id"]:
         try:
             if ad["pinned_until"] and not ad["unpinned"]:
                 await bot.unpin_chat_message(ad["channel_id"], ad["channel_message_id"])
-        except TelegramAPIError:
-            pass
+        except Exception as exc:  # noqa: BLE001 — закреп не главное, пост всё равно снимаем
+            log.warning("Не удалось снять закреп %s: %s", ad_id, exc)
         try:
             await bot.delete_message(ad["channel_id"], ad["channel_message_id"])
-        except TelegramAPIError as exc:
+        except Exception as exc:  # noqa: BLE001 — TelegramAPIError, сеть: ошибку показываем админу
             tg_error = str(exc)
             log.warning("Не удалось удалить пост %s из канала: %s", ad_id, exc)
 
@@ -488,8 +491,6 @@ async def delete_ad(bot: Optional[Bot], ad_id: int, by_admin_id: Optional[int] =
             refunded = int(ad["cost_total"])
             await tokens.add(ad["user_id"], refunded, "ad_refund",
                              {"ad_id": ad_id, "by": by_admin_id, "comment": comment})
-    if ad["channel_message_id"]:
-        await site_db.mark_deleted(ad["channel_id"], ad["channel_message_id"])
 
     if bot and kind != "author":
         comment_block = (await texts.t("txt_ad_deleted_comment", text=html.escape(comment))

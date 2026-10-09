@@ -352,7 +352,15 @@
   .adm-btn.delnr{margin-left:auto;background:transparent;color:var(--muted);
        border:2px dashed var(--line);box-shadow:none;opacity:.75}
   .adm-btn.delnr:hover{opacity:1;color:var(--red);border-color:var(--red);box-shadow:none}
-  .post.is-removing{opacity:0;transform:translateX(24px);transition:opacity .25s ease,transform .25s ease}
+  .post.adm-deleted{border-color:var(--faint);box-shadow:4px 4px 0 var(--faint);background:var(--field-bg);
+       opacity:.72;filter:grayscale(1);transition:opacity .3s ease,filter .3s ease}
+  .post.adm-deleted:hover{transform:none;box-shadow:4px 4px 0 var(--faint)}
+  .post.adm-deleted .tag,.post.adm-deleted .write-btn,.post.adm-deleted .avatar{background:var(--faint);
+       color:#fff;border-color:var(--faint);box-shadow:none}
+  .post.adm-deleted .post-photo{cursor:default;pointer-events:none}
+  .badge.deleted{background:var(--faint);border-color:var(--faint);color:#fff;text-transform:uppercase;
+       letter-spacing:.05em;font-family:var(--font-head);font-weight:900;font-size:11px}
+  .admin-foot .note{font-size:13px;font-weight:700;color:var(--faint)}
   a.live.admin-link{text-decoration:none;cursor:pointer}
   a.live.admin-link:hover{background:var(--yellow);color:#1c2540}
 
@@ -900,6 +908,7 @@
     if (pinned) el.appendChild(h('span', { class: 'pin-flag' }, ['Закреплено']));
 
     var meta = h('div', { class: 'post-meta' });
+    if (ADMIN_FEED && p.is_deleted) meta.appendChild(h('span', { class: 'badge deleted' }, ['удалено']));
     if (p.ad_type_tag) meta.appendChild(tagButton(p.ad_type_tag, p.ad_type_name, 'ad_type'));
     if (p.vertical_tag) meta.appendChild(tagButton(p.vertical_tag, p.vertical_name, 'vertical'));
     if (p.media_type && p.media_type !== 'text'){
@@ -914,7 +923,10 @@
     appendTextBody(body, p.text);
     el.appendChild(body);
     el.appendChild(buildFooter(p));
-    if (ADMIN_FEED) el.appendChild(buildAdminFoot(p, el));
+    if (ADMIN_FEED){
+      if (p.is_deleted) el.classList.add('is-deleted', 'adm-deleted');
+      else el.appendChild(buildAdminFoot(p, el));
+    }
 
     el.dataset.id = p.id;
     return el;
@@ -936,6 +948,22 @@
     btns[2].addEventListener('click', function(){ adminDelete(p, card, btns, true, false); });
     btns.forEach(function(b){ foot.appendChild(b); });
     return foot;
+  }
+
+  // tgError — в канале пост остался: кнопки оставляем, чтобы нажать ещё раз после выдачи права боту
+  function markCardDeleted(card, btns, tgError){
+    card.classList.add('is-deleted', 'adm-deleted');
+    var meta = card.querySelector('.post-meta');
+    if (meta && !meta.querySelector('.badge.deleted')){
+      meta.insertBefore(h('span', { class: 'badge deleted' }, ['удалено']), meta.firstChild);
+    }
+    if (tgError){
+      btns.forEach(function(b){ b.disabled = false; });
+      return;
+    }
+    var foot = card.querySelector('.admin-foot');
+    if (foot) foot.replaceWith(h('div', { class: 'admin-foot' },
+      [h('span', { class: 'note' }, ['Снято из канала и с сайта'])]));
   }
 
   function adminDelete(p, card, btns, withComment, refund){
@@ -961,8 +989,7 @@
             '\nПроверьте, что у бота в канале есть право «Удалять сообщения», и нажмите ещё раз.');
         }
         showToast(msg, !!d.tg_error);
-        card.classList.add('is-removing');
-        setTimeout(function(){ card.remove(); total = Math.max(0, total - 1); renderCount(); }, 260);
+        markCardDeleted(card, btns, d.tg_error);
       })
       .catch(function(e){
         btns.forEach(function(b){ b.disabled = false; });
@@ -1088,6 +1115,7 @@
     if (state.vertical) p.set('vertical', state.vertical);
     if (state.period && state.period !== 'all') p.set('period', state.period);
     if (state.only_pinned) p.set('only_pinned', 'true');
+    if (ADMIN_FEED) p.set('include_deleted', 'true');
     p.set('limit', limit);
     for (var k in (extra || {})) p.set(k, extra[k]);
     return p;
