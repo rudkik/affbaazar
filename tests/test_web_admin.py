@@ -307,6 +307,33 @@ async def main():
         assert (await c.get("/admin/api/ads", headers=bad_ip)).status_code == 200, "ограничение снято"
         print("админка по IP OK: список/подсети/IPv6, 403 чужим на /admin*, сайт открыт")
 
+        # --- ключ устройства (ADMIN_DEVICE_KEY + localStorage.key_encrypt → кука) ---
+        web.ADMIN_DEVICE_KEY = "k" * 64
+        c.cookies.clear(); c.cookies.set("session", good)
+        r = await c.get("/admin")
+        assert r.status_code == 200 and "key_encrypt" in r.text and "location.replace('/')" in r.text, \
+            "страница — шлюз: без ключа в localStorage уводит на сайт"
+        assert "key_encrypt" in (await c.get("/admin/feed")).text
+        assert (await c.get("/admin/api/ads")).status_code == 403, "API без ключа закрыт"
+        assert (await c.post("/admin/login", data={"password": "pass"})).status_code == 403
+        assert (await c.post("/admin/device", json={"key": "wrong"})).status_code == 403
+        assert (await c.post("/admin/device", json={"key": 123})).status_code == 403
+        assert c.cookies.get(web.DEVICE_COOKIE) is None
+        r = await c.post("/admin/device", json={"key": "k" * 64})
+        assert r.status_code == 200 and c.cookies.get(web.DEVICE_COOKIE), "верный ключ → кука"
+        assert "key_encrypt" not in (await c.get("/admin")).text, "с кукой — обычная админка"
+        assert (await c.get("/admin/api/ads")).status_code == 200
+        dev = c.cookies.get(web.DEVICE_COOKIE)
+        c.cookies.clear(); c.cookies.set("session", good); c.cookies.set(web.DEVICE_COOKIE, web._device_token(int(_time.time()) - 1))
+        assert (await c.get("/admin/api/ads")).status_code == 403, "просроченная кука устройства"
+        c.cookies.clear(); c.cookies.set("session", good); c.cookies.set(web.DEVICE_COOKIE, dev)
+        web.ADMIN_DEVICE_KEY = "m" * 64
+        assert (await c.get("/admin/api/ads")).status_code == 403, "сменили ключ — старые куки не работают"
+        web.ADMIN_DEVICE_KEY = ""
+        c.cookies.clear(); c.cookies.set("session", good)
+        assert (await c.get("/admin/api/ads")).status_code == 200, "пустой ключ = без проверки"
+        print("ключ устройства OK: шлюз, 403 для API, кука по верному ключу, срок, смена ключа")
+
         # --- выход ---
         await c.get("/admin/logout"); c.cookies.clear()
         assert (await c.get("/admin/api/ads")).status_code == 401

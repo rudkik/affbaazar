@@ -60,6 +60,9 @@ def _networks(raw: str) -> list:
 
 # Пусто = админка открыта с любого IP (только пароль). Иначе /admin* отвечает 403 чужим адресам.
 ADMIN_IPS = _networks(os.getenv("ADMIN_IPS", ""))
+# Ключ устройства: браузер хранит его в localStorage["key_encrypt"]; без него /admin* закрыт.
+# Пусто = проверки нет.
+ADMIN_DEVICE_KEY = os.getenv("ADMIN_DEVICE_KEY", "").strip()
 
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))

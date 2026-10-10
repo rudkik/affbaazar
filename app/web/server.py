@@ -18,7 +18,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from app import auth, cryptopay, db, keyboards, locks, loto, site_db, texts
-from app.config import ADMIN_IPS, ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
+from app.config import (ADMIN_DEVICE_KEY, ADMIN_IPS, ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL,
+                        SECRET_KEY)
 
 # На боевом домене (https) куки отдаём только по защищённому соединению.
 COOKIE_SECURE = PUBLIC_URL.startswith("https://")
@@ -146,15 +147,53 @@ def admin_ip_allowed(ip: str, networks=None) -> bool:
     return True if not networks else _in_nets(ip, networks)
 
 
+# ------------------------------------------------------------------ ключ устройства
+# Браузер держит ключ в localStorage["key_encrypt"] (кладётся руками, один раз). Сервер localStorage
+# не видит, поэтому страница-шлюз отправляет ключ на /admin/device и получает подписанную куку;
+# дальше каждый запрос в /admin* проверяется по куке. Смена ADMIN_DEVICE_KEY гасит все куки.
+DEVICE_COOKIE = "admin_device"
+DEVICE_TTL = 365 * 24 * 3600
+DEVICE_GATE_HTML = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="robots" content="noindex"><title>…</title></head><body><script>
+var k = localStorage.getItem('key_encrypt');
+if (!k) location.replace('/');
+else fetch('/admin/device', {method: 'POST', headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({key: k}), credentials: 'same-origin'})
+  .then(function(r){ if (r.ok) location.reload(); else location.replace('/'); })
+  .catch(function(){ location.replace('/'); });
+</script></body></html>"""
+
+
+def _device_token(exp: Optional[int] = None) -> str:
+    exp = exp or int(time.time()) + DEVICE_TTL
+    sig = hmac.new(ADMIN_DEVICE_KEY.encode(), f"admin-device:{exp}".encode(), hashlib.sha256).hexdigest()
+    return f"{exp}.{sig}"
+
+
+def device_ok(request: Request) -> bool:
+    if not ADMIN_DEVICE_KEY:
+        return True
+    cookie = request.cookies.get(DEVICE_COOKIE, "")
+    exp, _, _ = cookie.partition(".")
+    return (exp.isdigit() and int(exp) > time.time()
+            and hmac.compare_digest(cookie, _device_token(int(exp))))
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
     # Админка (страница, вход, API, лента модерации) — только с адресов из ADMIN_IPS
-    if request.url.path.startswith("/admin") and not admin_ip_allowed(client_ip(request)):
-        log.warning("admin: отказ по IP %s → %s", client_ip(request), request.url.path)
+    if path.startswith("/admin") and not admin_ip_allowed(client_ip(request)):
+        log.warning("admin: отказ по IP %s → %s", client_ip(request), path)
         return JSONResponse({"detail": "Доступ с этого адреса закрыт"}, status_code=403)
-    if RATE_WINDOW and RATE_LIMIT and not request.url.path.startswith(RATE_EXEMPT):
+    # …и только с устройства, где есть ключ: страницам — шлюз (он сам редиректит на сайт), API — 403
+    if path.startswith("/admin") and path != "/admin/device" and not device_ok(request):
+        if request.method == "GET" and path in ("/admin", "/admin/feed"):
+            return HTMLResponse(DEVICE_GATE_HTML)
+        return JSONResponse({"detail": "Доступ с этого устройства закрыт"}, status_code=403)
+    if RATE_WINDOW and RATE_LIMIT and not path.startswith(RATE_EXEMPT):
         ip = client_ip(request)
-        login = request.method == "POST" and request.url.path == "/admin/login"
+        login = request.method == "POST" and path in ("/admin/login", "/admin/device")
         if rate_limited(ip) or (login and rate_limited(f"login:{ip}", limit=LOGIN_LIMIT)):
             return JSONResponse({"detail": "Слишком много запросов, подождите"}, status_code=429,
                                 headers={"Retry-After": str(RATE_WINDOW)})
@@ -471,6 +510,20 @@ async def admin_feed(request: Request):
     if not is_authed(request):
         return await render("login.html")
     return await render("index.html", admin_feed="1")
+
+
+@app.post("/admin/device")
+async def admin_device(request: Request, payload: dict):
+    """Шлюз ключа устройства: ключ из localStorage → кука на год."""
+    key = payload.get("key") if isinstance(payload, dict) else None
+    if not ADMIN_DEVICE_KEY or not isinstance(key, str) or not hmac.compare_digest(key, ADMIN_DEVICE_KEY):
+        await asyncio.sleep(1)
+        log.warning("admin: неверный ключ устройства с IP %s", client_ip(request))
+        raise HTTPException(403, "Неверный ключ")
+    response = JSONResponse({"ok": True})
+    response.set_cookie(DEVICE_COOKIE, _device_token(), httponly=True, samesite="lax",
+                        secure=COOKIE_SECURE, max_age=DEVICE_TTL)
+    return response
 
 
 @app.post("/admin/login")
