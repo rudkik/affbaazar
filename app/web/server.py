@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import html
+import ipaddress
 import json
 import asyncio
 import logging
@@ -17,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from app import auth, cryptopay, db, keyboards, locks, loto, site_db, texts
-from app.config import ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
+from app.config import ADMIN_IPS, ADMIN_PASSWORD, ADMINS, DATA_DIR, PUBLIC_URL, SECRET_KEY
 
 # На боевом домене (https) куки отдаём только по защищённому соединению.
 COOKIE_SECURE = PUBLIC_URL.startswith("https://")
@@ -94,12 +95,34 @@ RATE_EXEMPT = ("/webhooks/",)
 _hits: dict[str, list[float]] = {}
 
 
+# Сети Cloudflare (https://www.cloudflare.com/ips/): если домен за «оранжевым облаком», до Caddy
+# доходит IP Cloudflare, а настоящий адрес — в CF-Connecting-IP. Верим ему только с этих сетей,
+# иначе заголовок подделает кто угодно, зайдя на сервер напрямую.
+CLOUDFLARE_NETS = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
+    "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+    "2a06:98c0::/29", "2c0f:f248::/32")]
+
+
+def _in_nets(ip: str, nets) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in n for n in nets)
+
+
 def client_ip(request: Request) -> str:
-    """IP клиента: за Caddy — последний адрес в X-Forwarded-For (его дописывает сам Caddy)."""
+    """IP клиента. За Caddy — последний адрес в X-Forwarded-For (его дописывает сам Caddy);
+    если это адрес Cloudflare — настоящий клиент в CF-Connecting-IP."""
     xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.rsplit(",", 1)[-1].strip()
-    return request.client.host if request.client else "?"
+    hop = xff.rsplit(",", 1)[-1].strip() if xff else (request.client.host if request.client else "?")
+    cf = request.headers.get("cf-connecting-ip", "").strip()
+    if cf and _in_nets(hop, CLOUDFLARE_NETS):
+        return cf
+    return hop
 
 
 def rate_limited(ip: str, now: Optional[float] = None, limit: Optional[int] = None) -> bool:
@@ -117,8 +140,18 @@ def rate_limited(ip: str, now: Optional[float] = None, limit: Optional[int] = No
     return False
 
 
+def admin_ip_allowed(ip: str, networks=None) -> bool:
+    """Пустой список ADMIN_IPS — ограничения нет. Нераспознанный адрес — не пускаем."""
+    networks = ADMIN_IPS if networks is None else networks
+    return True if not networks else _in_nets(ip, networks)
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
+    # Админка (страница, вход, API, лента модерации) — только с адресов из ADMIN_IPS
+    if request.url.path.startswith("/admin") and not admin_ip_allowed(client_ip(request)):
+        log.warning("admin: отказ по IP %s → %s", client_ip(request), request.url.path)
+        return JSONResponse({"detail": "Доступ с этого адреса закрыт"}, status_code=403)
     if RATE_WINDOW and RATE_LIMIT and not request.url.path.startswith(RATE_EXEMPT):
         ip = client_ip(request)
         login = request.method == "POST" and request.url.path == "/admin/login"

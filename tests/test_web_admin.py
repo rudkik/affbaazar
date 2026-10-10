@@ -271,6 +271,42 @@ async def main():
         web.LOGIN_LIMIT = saved_login; web._hits.clear()
         print("лимит запросов OK: 429 сверх лимита, по IP из X-Forwarded-For, вебхуки без лимита")
 
+        # --- админка только с разрешённых IP (ADMIN_IPS) ---
+        from app.config import _networks
+        nets = _networks("203.0.113.7, 10.0.0.0/8 ; 2001:db8::/32")
+        assert [str(n) for n in nets] == ["203.0.113.7/32", "10.0.0.0/8", "2001:db8::/32"], nets
+        assert _networks("") == [] and web.admin_ip_allowed("8.8.8.8", []), "пусто = без ограничений"
+        assert web.admin_ip_allowed("203.0.113.7", nets) and web.admin_ip_allowed("10.20.30.40", nets)
+        assert web.admin_ip_allowed("2001:db8::1", nets)
+        assert not web.admin_ip_allowed("203.0.113.8", nets) and not web.admin_ip_allowed("?", nets)
+        try:
+            _networks("not-an-ip"); raise AssertionError("кривой адрес должен быть ошибкой")
+        except ValueError:
+            pass
+        web.ADMIN_IPS = nets
+        ok_ip, bad_ip = {"X-Forwarded-For": "203.0.113.7"}, {"X-Forwarded-For": "198.51.100.1"}
+        for path in ("/admin", "/admin/feed", "/admin/api/ads", "/admin/api/stats"):
+            assert (await c.get(path, headers=bad_ip)).status_code == 403, path
+            assert (await c.get(path, headers=ok_ip)).status_code == 200, path
+        assert (await c.post("/admin/login", data={"password": "pass"}, headers=bad_ip)).status_code == 403
+        assert (await c.post("/admin/api/ads/1/delete", json={}, headers=bad_ip)).status_code == 403
+        # за Caddy наш IP — последний в цепочке; подставленный клиентом первым — не считается
+        assert (await c.get("/admin", headers={"X-Forwarded-For": "203.0.113.7, 198.51.100.1"})).status_code == 403
+        assert (await c.get("/admin", headers={"X-Forwarded-For": "198.51.100.1, 10.1.2.3"})).status_code == 200
+        # за Cloudflare: до Caddy доходит IP Cloudflare, клиент — в CF-Connecting-IP
+        cf = {"X-Forwarded-For": "104.16.1.1", "CF-Connecting-IP": "203.0.113.7"}
+        assert (await c.get("/admin", headers=cf)).status_code == 200, "клиент из CF-Connecting-IP"
+        cf_bad = {"X-Forwarded-For": "104.16.1.1", "CF-Connecting-IP": "198.51.100.1"}
+        assert (await c.get("/admin", headers=cf_bad)).status_code == 403
+        spoof = {"X-Forwarded-For": "198.51.100.1", "CF-Connecting-IP": "203.0.113.7"}
+        assert (await c.get("/admin", headers=spoof)).status_code == 403, "CF-заголовок не от Cloudflare — не верим"
+        # сайт и API ленты с чужого IP работают как раньше
+        assert (await c.get("/", headers=bad_ip)).status_code == 200
+        assert (await c.get("/api/posts", headers=bad_ip)).status_code == 200
+        web.ADMIN_IPS = []
+        assert (await c.get("/admin/api/ads", headers=bad_ip)).status_code == 200, "ограничение снято"
+        print("админка по IP OK: список/подсети/IPv6, 403 чужим на /admin*, сайт открыт")
+
         # --- выход ---
         await c.get("/admin/logout"); c.cookies.clear()
         assert (await c.get("/admin/api/ads")).status_code == 401

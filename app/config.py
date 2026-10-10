@@ -50,6 +50,17 @@ def _ids(raw: str) -> set[int]:
 
 ADMINS: set[int] = _ids(os.getenv("ADMINS", ""))
 
+
+def _networks(raw: str) -> list:
+    """ADMIN_IPS: адреса и подсети через запятую (1.2.3.4, 10.0.0.0/8). Кривые записи — ошибка старта."""
+    import ipaddress
+    return [ipaddress.ip_network(part.strip(), strict=False)
+            for part in (raw or "").replace(";", ",").split(",") if part.strip()]
+
+
+# Пусто = админка открыта с любого IP (только пароль). Иначе /admin* отвечает 403 чужим адресам.
+ADMIN_IPS = _networks(os.getenv("ADMIN_IPS", ""))
+
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
